@@ -1,17 +1,18 @@
 # pi-provider-girard
 
-One-command connect for the **api.girard-davila.net** LiteLLM endpoint from
-[Pi](https://pi.dev): GitHub SSO login and the coding model, preset.
+One-command connect for the **api.girard-davila.net** LLM endpoint from
+[Pi](https://pi.dev): the endpoint as a single `girard` provider, preset.
 
 A thin preset layer over [`pi-provider-litellm`](https://www.npmjs.com/package/pi-provider-litellm) —
-all model discovery, SSO login, token refresh, and auth storage come from that
-package. This one adds the `/girard` command, which writes the proxy base URL
-into Pi settings so login has nothing to fill in.
+all model discovery, auth storage, and transport come from that package. This
+one adds the `/girard` command, which registers the endpoint as the named
+provider **`girard`** so the model is addressed as `girard/qwen3.8-coder`
+instead of a `litellm/…` path.
 
 ## Install
 
 ```bash
-pi install npm:pi-provider-litellm            # dependency: provider + /login litellm
+pi install npm:pi-provider-litellm            # dependency: provider machinery
 pi install git:github.com/alx/pi-provider-girard   # this package: the /girard preset
 ```
 
@@ -25,32 +26,32 @@ In Pi, run:
 /girard
 ```
 
-Then follow the two prompts it prints:
+If no credential is found yet, add your endpoint API key to
+`~/.pi/agent/auth.json`, restart Pi, then:
 
 ```
-/login litellm          → "Sign in with LiteLLM SSO" (browser opens on GitHub)
-/model litellm/qwen3.8-coder
+/model girard/qwen3.8-coder
 ```
 
-That's it. `litellm/qwen3.8-coder` (Qwen3.8-27B on a 3090, 180k context)
+That's it. `girard/qwen3.8-coder` (Qwen3.8-27B on a 3090, 180k context)
 streams through `https://api.girard-davila.net/api/llm` → LiteLLM (spend
-tracked per GitHub account) → the inference node.
+tracked per account) → the inference node.
 
 ## What /girard does
 
 1. Confirms `pi-provider-litellm` is loaded (else: print the install line, stop).
-2. Merges `litellm.providers.litellm.baseUrl = https://api.girard-davila.net/api/llm`
+2. Merges `litellm.providers.girard = { displayName: "Girard", baseUrl: https://api.girard-davila.net/api/llm }`
    into `~/.pi/agent/settings.json` (never clobbers other settings).
-3. Checks `~/.pi/agent/auth.json`:
-   - already logged in here → just tell you to `/model litellm/qwen3.8-coder`;
-   - not logged in (or logged in elsewhere) → the two-step login/model path.
+3. Checks `~/.pi/agent/auth.json` for a `"girard"` entry:
+   - present → just tell you to `/model girard/qwen3.8-coder`;
+   - missing → print the exact auth.json snippet to add, then the model line.
 
 Re-running `/girard` is idempotent.
 
 ## Notes
 
-- Login is GitHub SSO through the LiteLLM proxy; your virtual key is issued by
-  the proxy and stored in `auth.json` (mode 0600) by `pi-provider-litellm`.
-- Re-login is just `/login litellm` again — the base URL is now remembered in
-  settings, so nothing to retype.
+- Keys are issued by the endpoint operator (invitation/onboarding flow, or
+  LiteLLM Web UI) and stored in `auth.json` (mode 0600).
+- Optional: `litellm.mcp = { enabled: false }` in settings silences the
+  extension's MCP tool discovery (the endpoint does not expose MCP).
 - The endpoint is personal; expect friendly rate limits.
