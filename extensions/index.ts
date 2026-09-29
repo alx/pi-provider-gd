@@ -1,18 +1,18 @@
 /**
- * pi-provider-girard — one-command connect for api.girard-davila.net
+ * pi-provider-gd — one-command connect for api.girard-davila.net
  *
  * A thin preset layer over `pi-provider-litellm` (npm:pi-provider-litellm):
- * registers the endpoint as the named provider "girard" in Pi settings —
+ * registers the endpoint as the named provider "gd" in Pi settings —
  * the LiteLLM machinery stays internal to the extension, the user sees one
  * Girard provider.
  *
- * Model names are DISCOVERED from the endpoint: /girard calls
+ * Model names are DISCOVERED from the endpoint: /gd-register calls
  * `<baseUrl>/v1/models` (the LiteLLM proxy, which mirrors the alias llama.cpp
  * advertises, derived from the GGUF filename) with the stored API key and
- * prints the exact `girard/<model-id>` names to select. If the endpoint is
+ * prints the exact `gd/<model-id>` names to select. If the endpoint is
  * unreachable, a static fallback name is printed instead.
  *
- * Usage: /girard
+ * Usage: /gd-register
  *
  * Requires: pi-provider-litellm installed and loaded in the same session.
  */
@@ -22,7 +22,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const BASE_URL = "https://api.girard-davila.net/api/llm";
-const PROVIDER = "girard";
+const PROVIDER = "gd";
 // Used only when the /v1/models call fails (endpoint offline, no key yet):
 const FALLBACK_MODEL = "Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller";
 const DISCOVER_TIMEOUT_MS = 8000;
@@ -44,7 +44,7 @@ function readJson(file: string): Record<string, unknown> {
 	}
 }
 
-/** Merge the girard provider definition into ~/.pi/agent/settings.json (never clobbers). */
+/** Merge the gd provider definition into ~/.pi/agent/settings.json (never clobbers). */
 function writeProviderSetting(): void {
 	const settings = readJson(settingsPath);
 	const litellm = (settings.litellm ??= {}) as Record<string, unknown>;
@@ -93,8 +93,8 @@ async function fetchModelIds(baseUrl: string, apiKey?: string): Promise<string[]
 	}
 }
 
-export default function girardExtension(pi: ExtensionAPI) {
-	pi.registerCommand("girard", {
+export default function gdExtension(pi: ExtensionAPI) {
+	pi.registerCommand("gd-register", {
 		description: "Connect api.girard-davila.net as the " + PROVIDER + " provider",
 		handler: async (_args, ctx) => {
 			const commands = pi.getCommands();
@@ -105,7 +105,7 @@ export default function girardExtension(pi: ExtensionAPI) {
 						"",
 						"1) pi install npm:pi-provider-litellm",
 						"2) restart pi",
-						"3) run /girard again",
+						"3) run /gd-register again",
 					].join("\n"),
 					"error",
 				);

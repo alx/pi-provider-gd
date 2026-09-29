@@ -1,6 +1,6 @@
 {
-  "name": "pi-provider-girard",
-  "version": "0.1.0",
+  "name": "pi-provider-gd",
+  "version": "0.2.0",
   "description": "One-command connect for the api.girard-davila.net LiteLLM endpoint (preset wrapper around pi-provider-litellm)",
   "type": "module",
   "license": "MIT",
