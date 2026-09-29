@@ -6,8 +6,11 @@ One-command connect for the **api.girard-davila.net** LLM endpoint from
 A thin preset layer over [`pi-provider-litellm`](https://www.npmjs.com/package/pi-provider-litellm) —
 all model discovery, auth storage, and transport come from that package. This
 one adds the `/girard` command, which registers the endpoint as the named
-provider **`girard`** so the model is addressed as `girard/qwen3.8-coder`
-instead of a `litellm/…` path.
+provider **`girard`** so the model is addressed as `girard/<model-id>` —
+where `<model-id>` is discovered live from the endpoint's `/v1/models`
+(which mirrors the alias llama.cpp advertises, derived from the GGUF
+filename — currently `Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller`) — instead of a
+`litellm/…` path.
 
 ## Install
 
@@ -30,12 +33,14 @@ If no credential is found yet, add your endpoint API key to
 `~/.pi/agent/auth.json`, restart Pi, then:
 
 ```
-/model girard/qwen3.8-coder
+/model girard/Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller
 ```
 
-That's it. `girard/qwen3.8-coder` (Qwen3.8-27B on a 3090, 180k context)
+That's it. The model (currently Qwen3.8-27B on a 3090, 180k context)
 streams through `https://api.girard-davila.net/api/llm` → LiteLLM (spend
-tracked per account) → the inference node.
+tracked per account) → the inference node. The exact id is printed by
+`/girard` — it fetches `/v1/models` and lists every model the endpoint
+offers, so no name is hardcoded in the extension.
 
 ## What /girard does
 
@@ -43,7 +48,9 @@ tracked per account) → the inference node.
 2. Merges `litellm.providers.girard = { displayName: "Girard", baseUrl: https://api.girard-davila.net/api/llm }`
    into `~/.pi/agent/settings.json` (never clobbers other settings).
 3. Checks `~/.pi/agent/auth.json` for a `"girard"` entry:
-   - present → just tell you to `/model girard/qwen3.8-coder`;
+   - present → query `/v1/models` and list every model as
+     `/model girard/<id>` (falling back to the known id if the endpoint is
+     unreachable);
    - missing → print the exact auth.json snippet to add, then the model line.
 
 Re-running `/girard` is idempotent.

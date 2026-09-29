@@ -2,9 +2,15 @@
  * pi-provider-girard — one-command connect for api.girard-davila.net
  *
  * A thin preset layer over `pi-provider-litellm` (npm:pi-provider-litellm):
- * registers the endpoint as the named provider "girard" in Pi settings so
- * the model is addressed as `girard/qwen3.8-coder` — the LiteLLM machinery
- * stays internal to the extension, the user sees one Girard provider.
+ * registers the endpoint as the named provider "girard" in Pi settings —
+ * the LiteLLM machinery stays internal to the extension, the user sees one
+ * Girard provider.
+ *
+ * Model names are DISCOVERED from the endpoint: /girard calls
+ * `<baseUrl>/v1/models` (the LiteLLM proxy, which mirrors the alias llama.cpp
+ * advertises, derived from the GGUF filename) with the stored API key and
+ * prints the exact `girard/<model-id>` names to select. If the endpoint is
+ * unreachable, a static fallback name is printed instead.
  *
  * Usage: /girard
  *
@@ -17,7 +23,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const BASE_URL = "https://api.girard-davila.net/api/llm";
 const PROVIDER = "girard";
-const MODEL = "girard/qwen3.8-coder";
+// Used only when the /v1/models call fails (endpoint offline, no key yet):
+const FALLBACK_MODEL = "Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller";
+const DISCOVER_TIMEOUT_MS = 8000;
 // Command registered by pi-provider-litellm when it is loaded:
 const PEER_COMMAND = "litellm-refresh";
 
@@ -47,7 +55,7 @@ function writeProviderSetting(): void {
 	fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 }
 
-function hasCredentialFor(): { present: boolean; root?: string } {
+function hasCredentialFor(): { present: boolean; root?: string; key?: string } {
 	const auth = readJson(authPath);
 	const cred: unknown = auth[PROVIDER];
 	if (cred === null || typeof cred !== "object" || Array.isArray(cred)) return { present: false };
@@ -57,7 +65,32 @@ function hasCredentialFor(): { present: boolean; root?: string } {
 	const root =
 		(typeof record.baseUrl === "string" && record.baseUrl) ||
 		(env && typeof env.LITELLM_BASE_URL === "string" ? (env.LITELLM_BASE_URL as string) : undefined);
-	return { present: true, root };
+	const key = typeof record.key === "string" ? record.key : undefined;
+	return { present: true, root, key };
+}
+
+/**
+ * Fetch model ids from an OpenAI-compatible /v1/models endpoint.
+ * Returns [] on any failure (caller falls back to FALLBACK_MODEL).
+ */
+async function fetchModelIds(baseUrl: string, apiKey?: string): Promise<string[]> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DISCOVER_TIMEOUT_MS);
+	try {
+		const headers: Record<string, string> = { Accept: "application/json" };
+		if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+		const res = await fetch(`${baseUrl}/v1/models`, { headers, signal: controller.signal });
+		if (!res.ok) return [];
+		const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+		const ids = Array.isArray(body.data)
+			? body.data.map((m) => m.id).filter((id): id is string => typeof id === "string" && id.length > 0)
+			: [];
+		return [...new Set(ids)];
+	} catch {
+		return [];
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 export default function girardExtension(pi: ExtensionAPI) {
@@ -87,16 +120,26 @@ export default function girardExtension(pi: ExtensionAPI) {
 			];
 
 			const cred = hasCredentialFor();
-			if (cred.present && (cred.root === undefined || cred.root === BASE_URL)) {
-				lines.push("", "Credential present. Select the model:");
-				lines.push(`  /model ${MODEL}`);
+			const models = await fetchModelIds(BASE_URL, cred.key);
+			if (models.length > 0) {
+				lines.push(
+					"",
+					"Models on api.girard-davila.net (live from /v1/models):",
+					...models.map((id) => `  /model ${PROVIDER}/${id}`),
+				);
+			} else if (cred.present && (cred.root === undefined || cred.root === BASE_URL)) {
+				lines.push(
+					"",
+					"Credential present, but /v1/models was not reachable — select the model:",
+					`  /model ${PROVIDER}/${FALLBACK_MODEL}`,
+				);
 			} else {
 				lines.push(
 					"",
 					"No \u201c" + PROVIDER + "\u201d credential found. Add your endpoint API key to",
 					`~/.pi/agent/auth.json, then restart pi:`,
 					`  "${PROVIDER}": { "type": "api_key", "key": "sk-..." }`,
-					`then select the model:  /model ${MODEL}`,
+					`then select the model:  /model ${PROVIDER}/${FALLBACK_MODEL}`,
 				);
 				if (cred.root && cred.root !== BASE_URL) {
 					lines.push("", `Note: existing credential points at ${cred.root}.`);
