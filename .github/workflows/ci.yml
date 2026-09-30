@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# Tests are hermetic: Node 24 runs .ts natively (type stripping) with node:test,
+# and the network boundary (globalThis.fetch) is stubbed — no build step, no
+# npm runtime deps, no real calls to api.girard-davila.net. Fast on every commit.
+jobs:
+  test:
+    name: tests (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Native TS type-stripping is flag-free from Node 23.6+ (24 LTS).
+        node: ["24"]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # Install dev deps (typescript + @types/node) used by the type-check step.
+      - name: Install dev dependencies
+        run: npm install --no-audit --no-fund
+
+      # src + tests + the extension entry point are all type-checked; the pi
+      # packages are dev-deps so @earendil-works/* imports resolve. The test
+      # suite itself is the source of truth for the auth/network logic.
+      - name: Type-check (src + tests)
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Run tests
+        run: node --test

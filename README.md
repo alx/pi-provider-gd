@@ -1,64 +1,61 @@
 # pi-provider-gd
 
-One-command connect for the **api.girard-davila.net** LLM endpoint from
-[Pi](https://pi.dev): the endpoint as a single `gd` provider, preset.
+A **native `gd` provider** for [api.girard-davila.net](https://api.girard-davila.net) for the [pi coding agent](https://github.com/badlogic/pi-mono). One install, one command, zero hand-editing.
 
-A thin preset layer over [`pi-provider-litellm`](https://www.npmjs.com/package/pi-provider-litellm) —
-all model discovery, auth storage, and transport come from that package. This
-one adds the `/gd-register` command, which registers the endpoint as the named
-provider **`gd`** so the model is addressed as `gd/<model-id>` —
-where `<model-id>` is discovered live from the endpoint's `/v1/models`
-(which mirrors the alias llama.cpp advertises, derived from the GGUF
-filename — currently `Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller`) — instead of a
-`litellm/…` path.
+```
+pi install git:github.com/alx/pi-provider-gd
+/login gd
+/model
+```
+
+## Features
+
+- **Self-contained** — no `pi-provider-litellm`, no other installs. `pi-provider-gd` registers its own native pi provider (`createProvider` + OpenAI-compatible streaming from `@earendil-works/pi-ai`).
+- **Native `/login gd`** — the standard pi login selector drives the LiteLLM CLI-SSO flow: a browser opens, you sign in with GitHub, the proxy issues a key, pi stores it in `~/.pi/agent/auth.json` under `gd`. No manual key handling.
+- **`gd/<model-id>`** — models surface under the `gd` provider id in `/model` and `/login`, refreshed live from the proxy's `/v1/models`. No pi restart needed.
+- **OpenAI-compatible streaming** — requests go to `https://api.girard-davila.net/api/llm/v1/chat/completions` with tool-call, thinking, and streaming support via pi-ai's `openai-completions` transport.
+- **Fallbacks** — `GD_API_KEY` env var is honored as an ambient credential; SSO login times out cleanly and re-running `/login gd` resumes.
 
 ## Install
 
 ```bash
-pi install npm:pi-provider-litellm            # dependency: provider machinery
-pi install git:github.com/alx/pi-provider-gd   # this package: the /gd-register preset
+pi install git:github.com/alx/pi-provider-gd
 ```
 
-(Local dev: `pi install ./path/to/pi-provider-gd`)
+That's the only step. Restart pi (or `/reload`) if you installed it mid-session.
 
-## Use
+## Log in
 
-In Pi, run:
-
-```
-/gd-register
-```
-
-If no credential is found yet, add your endpoint API key to
-`~/.pi/agent/auth.json`, restart Pi, then:
+Run `/login gd` in pi's interactive mode and pick **api.girard-davila.net** (SSO). A browser opens → sign in with GitHub → back in the terminal the key appears stored. Then:
 
 ```
-/model gd/Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller
+/model
 ```
 
-That's it. The model (currently Qwen3.8-27B on a 3090, 180k context)
-streams through `https://api.girard-davila.net/api/llm` → LiteLLM (spend
-tracked per account) → the inference node. The exact id is printed by
-`/gd-register` — it fetches `/v1/models` and lists every model the endpoint
-offers, so no name is hardcoded in the extension.
+Pick any `gd/<model-id>`.
 
-## What /gd-register does
+## How it works
 
-1. Confirms `pi-provider-litellm` is loaded (else: print the install line, stop).
-2. Merges `litellm.providers.gd = { displayName: "Girard", baseUrl: https://api.girard-davila.net/api/llm }`
-   into `~/.pi/agent/settings.json` (never clobbers other settings).
-3. Checks `~/.pi/agent/auth.json` for a `"gd"` entry:
-   - present → query `/v1/models` and list every model as
-     `/model gd/<id>` (falling back to the known id if the endpoint is
-     unreachable);
-   - missing → print the exact auth.json snippet to add, then the model line.
+- `extensions/index.ts` registers one native provider: `createGdProvider()` → `pi.registerProvider(...)`.
+- `src/provider.ts` builds the provider with `createProvider` (pi-ai) + `openAICompletionsApi()`; `auth.apiKey.login` is the SSO browser flow, `fetchModels` polls `/v1/models` with the resolved key.
+- `src/core.ts` holds the pure, testable logic: SSO start/poll (`/sso/cli/start`, `/sso/cli/poll/{id}` with the `x-litellm-cli-poll-secret` header), model listing, auth.json read/store.
+- Credentials live in `~/.pi/agent/auth.json` under `gd` — the same file pi uses for every provider.
 
-Re-running `/gd-register` is idempotent.
+## Testing
 
-## Notes
+```bash
+npm install
+npm test          # node --test, hermetic (globalThis.fetch stubbed)
+npx tsc --noEmit  # type-check src + extension + tests
+```
 
-- Keys are issued by the endpoint operator (invitation/onboarding flow, or
-  LiteLLM Web UI) and stored in `auth.json` (mode 0600).
-- Optional: `litellm.mcp = { enabled: false }` in settings silences the
-  extension's MCP tool discovery (the endpoint does not expose MCP).
-- The endpoint is personal; expect friendly rate limits.
+CI (`.github/workflows/ci.yml`) runs both on every push/PR.
+
+## Endpoint
+
+- Proxy root: `https://api.girard-davila.net/api/llm` (OpenAI-compatible `/v1/*`)
+- SSO page: `https://api.girard-davila.net/auth/sso`
+
+## License
+
+MIT

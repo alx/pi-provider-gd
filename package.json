@@ -1,12 +1,31 @@
 {
   "name": "pi-provider-gd",
-  "version": "0.2.0",
-  "description": "One-command connect for the api.girard-davila.net LiteLLM endpoint (preset wrapper around pi-provider-litellm)",
+  "version": "1.0.0",
+  "description": "Native `gd` pi provider for api.girard-davila.net: SSO browser login via /login gd, key auto-stored, models appear as gd/<model-id> with no restart. Self-contained (no pi-provider-litellm).",
   "type": "module",
   "license": "MIT",
   "pi": {
     "extensions": [
       "./extensions/index.ts"
     ]
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "litellm",
+    "girard-davila"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^24",
+    "typescript": "^5.6.3"
   }
 }
