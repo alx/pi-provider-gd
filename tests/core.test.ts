@@ -18,6 +18,7 @@ import {
 	PROVIDER_ID,
 	credentialKey,
 	fetchModelIds,
+	fetchModelLimits,
 	getCredential,
 	pollCliSso,
 	readJson,
@@ -190,6 +191,73 @@ test("fetchModelIds: returns [] on network failure", async () => {
 		throw new Error("network down");
 	}) as unknown as typeof fetch;
 	assert.deepEqual(await fetchModelIds(BASE_URL), []);
+});
+
+// ---------------------------------------------------------------------------
+// fetchModelLimits: real limits come from /model/info, not /v1/models
+// ---------------------------------------------------------------------------
+
+test("fetchModelLimits: reads litellm_params limits keyed by model_name", async () => {
+	const { calls } = mockFetch(async (url) => {
+		assert.equal(url, `${BASE_URL}/model/info`);
+		return new Response(
+			JSON.stringify({
+				data: [
+					{
+						model_name: "Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller",
+						litellm_params: { max_input_tokens: 128000, max_output_tokens: 8192 },
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	});
+	const limits = await fetchModelLimits(BASE_URL, "sk-abc");
+	assert.deepEqual(limits["Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller"], {
+		maxInputTokens: 128000,
+		maxOutputTokens: 8192,
+	});
+	const headers = calls[0].init?.headers as Record<string, string>;
+	assert.equal(headers.Authorization, "Bearer sk-abc");
+});
+
+test("fetchModelLimits: skips null/zero/non-numeric limits (LiteLLM emits null for aliases)", async () => {
+	mockFetch(
+		async () =>
+			new Response(
+				JSON.stringify({
+					data: [
+						{ model_name: "alias-no-limits", litellm_params: { max_input_tokens: null, max_output_tokens: null } },
+						{ model_name: "zero", litellm_params: { max_input_tokens: 0, max_output_tokens: 0 } },
+						{ model_name: "strings", litellm_params: { max_input_tokens: "128000", max_output_tokens: "8192" } },
+					],
+				}),
+				{ status: 200 },
+			),
+	);
+	const limits = await fetchModelLimits(BASE_URL);
+	assert.deepEqual(limits, {});
+});
+
+test("fetchModelLimits: returns {} on HTTP error / bad body / network failure", async () => {
+	mockFetch(async () => new Response("boom", { status: 500 }));
+	assert.deepEqual(await fetchModelLimits(BASE_URL), {});
+	mockFetch(async () => new Response("not json", { status: 200 }));
+	assert.deepEqual(await fetchModelLimits(BASE_URL), {});
+	globalThis.fetch = (async () => {
+		throw new Error("network down");
+	}) as unknown as typeof fetch;
+	assert.deepEqual(await fetchModelLimits(BASE_URL), {});
+});
+
+test("fetchModelLimits: honours an external abort signal", async () => {
+	const { calls } = mockFetch(async () => {
+		throw new Error("should have been aborted");
+	});
+	const controller = new AbortController();
+	controller.abort();
+	assert.deepEqual(await fetchModelLimits(BASE_URL, "sk-x", { signal: controller.signal }), {});
+	assert.equal(calls.length, 0);
 });
 
 // ---------------------------------------------------------------------------

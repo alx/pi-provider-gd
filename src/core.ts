@@ -101,6 +101,70 @@ export async function fetchModelIds(
 	}
 }
 
+export interface ModelLimits {
+	maxInputTokens?: number;
+	maxOutputTokens?: number;
+}
+
+/**
+ * Reject non-positive / non-integer limit values that LiteLLM sometimes emits
+ * (it reports `null` for aliases that lack a backing deployment).
+ */
+function positiveInt(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+/**
+ * Fetch per-model context/output limits from LiteLLM's `/model/info` endpoint.
+ *
+ * The OpenAI-compatible `/v1/models` payload only carries id/object/created/
+ * owned_by, so a client cannot learn the real window from it. LiteLLM exposes
+ * the authoritative numbers under `litellm_params.max_input_tokens` and
+ * `litellm_params.max_output_tokens`. Keys are the deployment `model_name`
+ * (which is also a callable `model` id). Aliases without their own deployment
+ * are absent — callers should fall back to documented defaults. Returns {} on
+ * any failure so discovery never blocks the provider from loading.
+ */
+export async function fetchModelLimits(
+	baseUrl: string = BASE_URL,
+	apiKey?: string,
+	options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<Record<string, ModelLimits>> {
+	const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOVER_TIMEOUT_MS;
+	const controller = new AbortController();
+	const onAbort = () => controller.abort();
+	if (options.signal) {
+		if (options.signal.aborted) return {};
+		options.signal.addEventListener("abort", onAbort, { once: true });
+	}
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const headers: Record<string, string> = { Accept: "application/json" };
+		if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+		const res = await fetch(baseUrl + "/model/info", { headers, signal: controller.signal });
+		if (!res.ok) return {};
+		const body = (await res.json()) as {
+			data?: Array<{ model_name?: unknown; litellm_params?: Record<string, unknown> }>;
+		};
+		const out: Record<string, ModelLimits> = {};
+		for (const entry of Array.isArray(body.data) ? body.data : []) {
+			const name = entry?.model_name;
+			if (typeof name !== "string" || name.length === 0) continue;
+			const params = entry.litellm_params ?? {};
+			const maxInputTokens = positiveInt(params.max_input_tokens);
+			const maxOutputTokens = positiveInt(params.max_output_tokens);
+			if (maxInputTokens === undefined && maxOutputTokens === undefined) continue;
+			out[name] = { maxInputTokens, maxOutputTokens };
+		}
+		return out;
+	} catch {
+		return {};
+	} finally {
+		clearTimeout(timer);
+		options.signal?.removeEventListener("abort", onAbort);
+	}
+}
+
 export interface CliSsoStart {
 	loginId: string;
 	pollSecret: string;

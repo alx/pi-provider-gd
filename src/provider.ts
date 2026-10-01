@@ -23,19 +23,30 @@ import {
 	BASE_URL,
 	PROVIDER_ID,
 	fetchModelIds,
+	fetchModelLimits,
 	pollCliSso,
 	startCliSso,
 	verificationUrl,
+	type ModelLimits,
 } from "./core.ts";
 
-export const DEFAULT_CONTEXT_WINDOW = 32_768;
-export const DEFAULT_MAX_TOKENS = 4096;
+// Fallbacks used when the proxy does not report limits for a given id.
+//
+// /v1/models carries no limits (OpenAI schema: id/object/created/owned_by), so
+// the provider asks LiteLLM's /model/info instead. That endpoint only lists
+// real deployments, NOT aliases, so ids such as `qwen3.8-27b` may have no
+// entry. For those we assume the backend's documented limits, which the proxy
+// advertises for the underlying deployment: max_input_tokens 128000,
+// max_output_tokens 8192. Undersizing maxTokens makes the model stop early and
+// pi surface "Response was truncated before completion." on long answers.
+export const DEFAULT_CONTEXT_WINDOW = 128_000;
+export const DEFAULT_MAX_TOKENS = 8192;
 export const ENV_API_KEY = "GD_API_KEY";
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 /** Map a discovered model id to a Model object the pi runtime can stream. */
-export function toModel(id: string): Model<"openai-completions"> {
+export function toModel(id: string, limits?: ModelLimits): Model<"openai-completions"> {
 	return {
 		id,
 		name: id,
@@ -45,8 +56,8 @@ export function toModel(id: string): Model<"openai-completions"> {
 		reasoning: false,
 		input: ["text"],
 		cost: { ...ZERO_COST },
-		contextWindow: DEFAULT_CONTEXT_WINDOW,
-		maxTokens: DEFAULT_MAX_TOKENS,
+		contextWindow: limits?.maxInputTokens ?? DEFAULT_CONTEXT_WINDOW,
+		maxTokens: limits?.maxOutputTokens ?? DEFAULT_MAX_TOKENS,
 	};
 }
 
@@ -126,11 +137,18 @@ export function createGdProvider(options: GdProviderOptions = {}): Provider {
 		api: openAICompletionsApi(),
 		async fetchModels(context) {
 			const key = context.credential?.type === "api_key" ? context.credential.key : undefined;
-			const ids = await fetchModelIds(root, key, {
+			const discoverOptions = {
 				timeoutMs: options.discoverTimeoutMs,
 				signal: context.signal,
-			});
-			return ids.map(toModel);
+			};
+			// Two independent lookups: the id list (/v1/models) and the real limits
+			// (/model/info). Limits are best-effort — a failure there must not hide
+			// the models, so it degrades to the documented defaults instead.
+			const [ids, limits] = await Promise.all([
+				fetchModelIds(root, key, discoverOptions),
+				fetchModelLimits(root, key, discoverOptions),
+			]);
+			return ids.map((id) => toModel(id, limits[id]));
 		},
 	});
 }
