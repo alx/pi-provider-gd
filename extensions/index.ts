@@ -18,6 +18,10 @@
  * the default gd model (GD_DEFAULT_MODEL env or DEFAULT_MODEL_ID, validated
  * against the live catalog) as soon as a credential exists — so after
  * install + /login gd the next session is immediately usable.
+ *
+ * /gd-doctor — diagnose credential + /v1/models reachability from inside pi
+ * (pi's /model screen hides the underlying refresh error, so it shows the
+ * exact reason a catalog refresh failed).
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createGdProvider, DEFAULT_MODEL_ID, ENV_API_KEY, toModel } from "../src/provider.ts";
@@ -27,6 +31,7 @@ import {
 	credentialKey,
 	defaultAuthPath,
 	fetchModelIds,
+	fetchModelIdsChecked,
 	getCredential,
 } from "../src/core.ts";
 
@@ -60,5 +65,35 @@ export default function gdExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		void ensureDefaultModel(ctx);
+	});
+
+	/**
+	 * /gd-doctor — diagnose the gd provider from inside pi.
+	 * pi's /model screen hides the underlying refresh error, so this reports
+	 * the exact failure (credential state, network, HTTP status, model list).
+	 */
+	pi.registerCommand("gd-doctor", {
+		description: `Diagnose the gd provider (credential + ${BASE_URL}/v1/models)`,
+		async handler() {
+			const lines: string[] = [];
+			const storedKey = credentialKey(getCredential(defaultAuthPath(), PROVIDER_ID));
+			const key = storedKey ?? process.env[ENV_API_KEY];
+			lines.push(`gd-doctor — endpoint: ${BASE_URL}`);
+			lines.push(
+				`credential: ${key ? `found (${key.slice(0, 8)}…, from ${storedKey ? "auth.json" : ENV_API_KEY})` : "none — run /login gd"}`,
+			);
+			if (key) {
+				try {
+					const ids = await fetchModelIdsChecked(BASE_URL, key, { timeoutMs: 8000 });
+					lines.push(`discovery: OK — ${ids.length} model(s): ${ids.join(", ")}`);
+					const desired = process.env.GD_DEFAULT_MODEL ?? DEFAULT_MODEL_ID;
+					lines.push(`default model would be: ${ids.includes(desired) ? desired : (ids[0] ?? desired)}`);
+				} catch (e) {
+					lines.push(`discovery FAILED: ${e instanceof Error ? e.message : String(e)}`);
+					lines.push("If this is a network error, check connectivity from this machine, e.g.: curl -I " + BASE_URL + "/v1/models");
+				}
+			}
+			pi.sendMessage({ customType: "gd-doctor", content: lines.join("\n"), display: true });
+		},
 	});
 }

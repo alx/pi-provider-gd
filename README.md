@@ -18,6 +18,7 @@ pi install git:github.com/alx/pi-provider-gd
 - **`gd/<model-id>`** — models surface under the `gd` provider id in `/model` and `/login`, refreshed live from the proxy's `/v1/models`. No pi restart needed.
 - **Sensible default model** — a new session with no model selected automatically lands on the default gd model (first live model, or `GD_DEFAULT_MODEL` if you set it) once a credential exists. No "no model" dead-end after install + login.
 - **Honest failures** — if the proxy is unreachable or the key is rejected, `/model` refresh surfaces an error ("model discovery request failed … check network connectivity to the proxy") instead of silently showing zero models.
+- **`/gd-doctor`** — in-pi diagnostics: shows the exact cause when a catalog refresh fails (credential state, network error, HTTP status, model list), since pi's `/model` screen hides the underlying error.
 - **OpenAI-compatible streaming** — requests go to `https://api.girard-davila.net/api/llm/v1/chat/completions` with tool-call, thinking, and streaming support via pi-ai's `openai-completions` transport.
 - **Fallbacks** — `GD_API_KEY` env var is honored as an ambient credential; SSO login times out cleanly and re-running `/login gd` resumes.
 
@@ -39,7 +40,13 @@ Run `/login gd` in pi's interactive mode and pick **api.girard-davila.net**. Cho
 
 Pick any `gd/<model-id>`.
 
-A brand-new session that has no model yet is pointed at the default gd model automatically (default `qwen3.8-primary`, override with the `GD_DEFAULT_MODEL` env var, validated against the live catalog). If pi reports that the model catalog could not be refreshed, check that the machine can reach `https://api.girard-davila.net` (e.g. `curl -I https://api.girard-davila.net/api/llm/v1/models`) — an empty `gd` list is almost always a connectivity or key problem, not an empty proxy.
+A brand-new session that has no model yet is pointed at the default gd model automatically (default `qwen3.8-primary`, override with the `GD_DEFAULT_MODEL` env var, validated against the live catalog). If pi reports that the model catalog could not be refreshed (`Could not refresh gd; showing cached models`), run **`/gd-doctor`** in pi — it reports the exact cause (missing credential, network failure, HTTP error, or the model list), since pi's `/model` screen hides the underlying error. As a shell check, verify the machine can reach the proxy at all:
+
+```
+curl -I https://api.girard-davila.net/api/llm/v1/models
+```
+
+A failure there means a connectivity/VPN problem on that machine, not a pi problem.
 
 ## How it works
 
