@@ -46,7 +46,7 @@ A brand-new session that has no model yet is pointed at the default gd model aut
 curl -I https://api.girard-davila.net/api/llm/v1/models
 ```
 
-A failure there means a connectivity/VPN problem on that machine, not a pi problem.
+A failure there means a connectivity/VPN problem on that machine, not a pi problem. `/gd-doctor` includes the exact failure and a contact for the maintainer (Alexandre Girard, <git@alexgirard.com>) — include its output when reporting a problem.
 
 ## How it works
 

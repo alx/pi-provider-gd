@@ -91,6 +91,7 @@ export default function gdExtension(pi: ExtensionAPI) {
 				} catch (e) {
 					lines.push(`discovery FAILED: ${e instanceof Error ? e.message : String(e)}`);
 					lines.push("If this is a network error, check connectivity from this machine, e.g.: curl -I " + BASE_URL + "/v1/models");
+					lines.push("If the problem persists, contact the maintainer: Alexandre Girard <git@alexgirard.com> — please include this /gd-doctor output.");
 				}
 			}
 			pi.sendMessage({ customType: "gd-doctor", content: lines.join("\n"), display: true });

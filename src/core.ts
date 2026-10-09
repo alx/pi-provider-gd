@@ -98,11 +98,13 @@ export async function fetchModelIdsChecked(
 			res = await fetch(baseUrl + "/v1/models", { headers, signal: controller.signal });
 		} catch (e) {
 			throw new Error(
-				`model discovery request failed for ${baseUrl}/v1/models (${describeFetchError(e)}); check network connectivity to the proxy`,
+				`model discovery request failed for ${baseUrl}/v1/models (${describeFetchError(e)}); check network connectivity to the proxy — run /gd-doctor in pi for diagnosis and contact info`,
 			);
 		}
 		if (!res.ok) {
-			throw new Error(`model discovery rejected by proxy (HTTP ${res.status}); check the API key`);
+			throw new Error(
+				`model discovery rejected by proxy (HTTP ${res.status}); check the API key — run /gd-doctor in pi for diagnosis and contact info`,
+			);
 		}
 		const body = (await res.json().catch(() => undefined)) as { data?: Array<{ id?: unknown }> } | undefined;
 		const ids = Array.isArray(body?.data)
