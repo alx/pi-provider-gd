@@ -98,7 +98,7 @@ export async function fetchModelIdsChecked(
 			res = await fetch(baseUrl + "/v1/models", { headers, signal: controller.signal });
 		} catch (e) {
 			throw new Error(
-				`model discovery request failed for ${baseUrl}/v1/models (${e instanceof Error ? e.message : String(e)}); check network connectivity to the proxy`,
+				`model discovery request failed for ${baseUrl}/v1/models (${describeFetchError(e)}); check network connectivity to the proxy`,
 			);
 		}
 		if (!res.ok) {
@@ -113,6 +113,27 @@ export async function fetchModelIdsChecked(
 		clearTimeout(timer);
 		options.signal?.removeEventListener("abort", onAbort);
 	}
+}
+
+/**
+ * Flatten a fetch failure into a single-line description, unwrapping the
+ * undici `cause` chain (and AggregateError `errors`) so the real network
+ * error (ENOTFOUND, ECONNREFUSED, UND_ERR_CONNECT_TIMEOUT, …) is visible
+ * instead of the bare "fetch failed".
+ */
+function describeFetchError(e: unknown, depth = 0): string {
+	if (depth > 4) return "…";
+	if (e instanceof Error) {
+		const errors = (e as { errors?: unknown[] }).errors;
+		if (Array.isArray(errors) && errors.length > 0) {
+			return errors.map((err) => describeFetchError(err, depth + 1)).join(" | ");
+		}
+		const code = (e as { code?: unknown }).code;
+		const head = code ? `${e.message} [${String(code)}]` : e.message;
+		const cause = (e as { cause?: unknown }).cause;
+		return cause ? `${head}; cause: ${describeFetchError(cause, depth + 1)}` : head;
+	}
+	return String(e);
 }
 
 /** Fetch model ids from an OpenAI-compatible /v1/models endpoint. [] on any failure. */

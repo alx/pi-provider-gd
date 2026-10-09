@@ -220,6 +220,15 @@ test("fetchModelIdsChecked: throws on network failure", async () => {
 	await assert.rejects(fetchModelIdsChecked(BASE_URL), /model discovery request failed/);
 });
 
+test("fetchModelIdsChecked: error includes the undici cause chain", async () => {
+	globalThis.fetch = (async () => {
+		const err = new TypeError("fetch failed");
+		err.cause = Object.assign(new Error("connect ECONNREFUSED 2a01:e0a::1:443"), { code: "ECONNREFUSED" });
+		throw err;
+	}) as unknown as typeof fetch;
+	await assert.rejects(fetchModelIdsChecked(BASE_URL), /ECONNREFUSED/);
+});
+
 test("fetchModelIdsChecked: throws with status on non-OK response", async () => {
 	mockFetch(async () => new Response("unauthorized", { status: 401 }));
 	await assert.rejects(fetchModelIdsChecked(BASE_URL), /HTTP 401/);
