@@ -18,6 +18,7 @@ import {
 	PROVIDER_ID,
 	credentialKey,
 	fetchModelIds,
+	fetchModelIdsChecked,
 	fetchModelLimits,
 	getCredential,
 	pollCliSso,
@@ -191,6 +192,43 @@ test("fetchModelIds: returns [] on network failure", async () => {
 		throw new Error("network down");
 	}) as unknown as typeof fetch;
 	assert.deepEqual(await fetchModelIds(BASE_URL), []);
+});
+
+// ---------------------------------------------------------------------------
+// fetchModelIdsChecked: strict variant — failures must surface, not hide
+// ---------------------------------------------------------------------------
+
+test("fetchModelIdsChecked: returns ids on HTTP 200", async () => {
+	mockFetch(async () => new Response(JSON.stringify({ data: [{ id: "m1" }, { id: "m2" }] }), { status: 200 }));
+	assert.deepEqual(await fetchModelIdsChecked(BASE_URL, "sk-abc"), ["m1", "m2"]);
+});
+
+test("fetchModelIdsChecked: returns [] on 200 with empty data (legitimately no models)", async () => {
+	mockFetch(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+	assert.deepEqual(await fetchModelIdsChecked(BASE_URL), []);
+});
+
+test("fetchModelIdsChecked: returns [] on 200 with unparseable body", async () => {
+	mockFetch(async () => new Response("not json", { status: 200 }));
+	assert.deepEqual(await fetchModelIdsChecked(BASE_URL), []);
+});
+
+test("fetchModelIdsChecked: throws on network failure", async () => {
+	globalThis.fetch = (async () => {
+		throw new Error("network down");
+	}) as unknown as typeof fetch;
+	await assert.rejects(fetchModelIdsChecked(BASE_URL), /model discovery request failed/);
+});
+
+test("fetchModelIdsChecked: throws with status on non-OK response", async () => {
+	mockFetch(async () => new Response("unauthorized", { status: 401 }));
+	await assert.rejects(fetchModelIdsChecked(BASE_URL), /HTTP 401/);
+});
+
+test("fetchModelIdsChecked: throws when pre-aborted", async () => {
+	const controller = new AbortController();
+	controller.abort();
+	await assert.rejects(fetchModelIdsChecked(BASE_URL, "sk-x", { signal: controller.signal }), /aborted/);
 });
 
 // ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ import { createProvider, openAICompletionsApi } from "@earendil-works/pi-ai/comp
 import {
 	BASE_URL,
 	PROVIDER_ID,
-	fetchModelIds,
+	fetchModelIdsChecked,
 	fetchModelLimits,
 	pollCliSso,
 	startCliSso,
@@ -42,6 +42,12 @@ import {
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
 export const DEFAULT_MAX_TOKENS = 8192;
 export const ENV_API_KEY = "GD_API_KEY";
+/**
+ * Default model id for fresh sessions (option B self-heal). Override with
+ * the GD_DEFAULT_MODEL env var; the extension validates the id against the
+ * live /v1/models catalog and falls back to the first listed model.
+ */
+export const DEFAULT_MODEL_ID = "qwen3.8-primary";
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
@@ -197,8 +203,11 @@ export function createGdProvider(options: GdProviderOptions = {}): Provider {
 			// Two independent lookups: the id list (/v1/models) and the real limits
 			// (/model/info). Limits are best-effort — a failure there must not hide
 			// the models, so it degrades to the documented defaults instead.
+			// The id lookup is STRICT on purpose: a network/auth failure throws so
+			// pi reports "model catalog could not be refreshed" instead of silently
+			// publishing an empty catalog (which makes /model show nothing).
 			const [ids, limits] = await Promise.all([
-				fetchModelIds(root, key, discoverOptions),
+				fetchModelIdsChecked(root, key, discoverOptions),
 				fetchModelLimits(root, key, discoverOptions),
 			]);
 			return ids.map((id) => toModel(id, limits[id]));

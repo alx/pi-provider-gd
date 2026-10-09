@@ -69,8 +69,15 @@ export function storeCredential(authPath: string, key: string, providerId: strin
 	}
 }
 
-/** Fetch model ids from an OpenAI-compatible /v1/models endpoint. [] on any failure. */
-export async function fetchModelIds(
+/**
+ * Fetch model ids from an OpenAI-compatible /v1/models endpoint.
+ *
+ * Throws a descriptive error on network failure or a non-OK response, so
+ * callers can distinguish "the proxy lists no models" (200 + empty) from
+ * "we could not reach the proxy" (which must surface, not hide). Returns
+ * the unique id list on HTTP success (possibly empty).
+ */
+export async function fetchModelIdsChecked(
 	baseUrl: string = BASE_URL,
 	apiKey?: string,
 	options: { timeoutMs?: number; signal?: AbortSignal } = {},
@@ -79,25 +86,45 @@ export async function fetchModelIds(
 	const controller = new AbortController();
 	const onAbort = () => controller.abort();
 	if (options.signal) {
-		if (options.signal.aborted) return [];
+		if (options.signal.aborted) throw new Error("model discovery aborted");
 		options.signal.addEventListener("abort", onAbort, { once: true });
 	}
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const headers: Record<string, string> = { Accept: "application/json" };
 		if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-		const res = await fetch(baseUrl + "/v1/models", { headers, signal: controller.signal });
-		if (!res.ok) return [];
-		const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
-		const ids = Array.isArray(body.data)
+		let res: Response;
+		try {
+			res = await fetch(baseUrl + "/v1/models", { headers, signal: controller.signal });
+		} catch (e) {
+			throw new Error(
+				`model discovery request failed for ${baseUrl}/v1/models (${e instanceof Error ? e.message : String(e)}); check network connectivity to the proxy`,
+			);
+		}
+		if (!res.ok) {
+			throw new Error(`model discovery rejected by proxy (HTTP ${res.status}); check the API key`);
+		}
+		const body = (await res.json().catch(() => undefined)) as { data?: Array<{ id?: unknown }> } | undefined;
+		const ids = Array.isArray(body?.data)
 			? body.data.map((m) => m.id).filter((id): id is string => typeof id === "string" && id.length > 0)
 			: [];
 		return [...new Set(ids)];
-	} catch {
-		return [];
 	} finally {
 		clearTimeout(timer);
 		options.signal?.removeEventListener("abort", onAbort);
+	}
+}
+
+/** Fetch model ids from an OpenAI-compatible /v1/models endpoint. [] on any failure. */
+export async function fetchModelIds(
+	baseUrl: string = BASE_URL,
+	apiKey?: string,
+	options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<string[]> {
+	try {
+		return await fetchModelIdsChecked(baseUrl, apiKey, options);
+	} catch {
+		return [];
 	}
 }
 
