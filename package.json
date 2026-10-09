@@ -1,7 +1,7 @@
 {
   "name": "pi-provider-gd",
   "version": "1.0.0",
-  "description": "Native `gd` pi provider for api.girard-davila.net: SSO browser login via /login gd, key auto-stored, models appear as gd/<model-id> with no restart. Self-contained (no pi-provider-litellm).",
+  "description": "Native `gd` pi provider for api.girard-davila.net: /login gd accepts a pasted API key or browser SSO, key auto-stored, models appear as gd/<model-id> with no restart. Self-contained (no pi-provider-litellm).",
   "type": "module",
   "license": "MIT",
   "pi": {

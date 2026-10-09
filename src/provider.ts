@@ -62,11 +62,64 @@ export function toModel(id: string, limits?: ModelLimits): Model<"openai-complet
 }
 
 /**
+ * Prompt for an API key created in the proxy's web UI, pasted by the user.
+ */
+async function manualKeyLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
+	const key = (await interaction.prompt({
+		type: "secret",
+		message: "Paste the API key (created at /ui/ on api.girard-davila.net):",
+		placeholder: "sk-...",
+	})).trim();
+	if (key.length === 0) throw new Error("API key is empty; login cancelled");
+	return { type: "api_key", key };
+}
+
+type CliSsoStart = Awaited<ReturnType<typeof startCliSso>>;
+
+/**
+ * Login flow for `/login gd`. Lets the user choose between:
+ *   - pasting an API key created in the proxy's web UI (works everywhere), and
+ *   - the SSO browser flow (browser → GitHub → issued key).
+ * If the SSO endpoint cannot be reached, falls back to pasting the key.
+ */
+export async function gdLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
+	const choice = await interaction.prompt({
+		type: "select",
+		message: "How would you like to sign in to Girard (api.girard-davila.net)?",
+		options: [
+			{
+				id: "manual",
+				label: "Paste API key",
+				description: "Use a key created at https://api.girard-davila.net/api/llm/ui/",
+			},
+			{
+				id: "sso",
+				label: "Sign in with GitHub (browser SSO)",
+				description: "Opens the SSO page; the issued key is polled and stored",
+			},
+		],
+	});
+
+	if (choice !== "sso") return manualKeyLogin(interaction);
+
+	let start: CliSsoStart;
+	try {
+		start = await startCliSso(BASE_URL);
+	} catch (e) {
+		interaction.notify({
+			type: "info",
+			message: `Could not start SSO (${e instanceof Error ? e.message : String(e)}). Falling back to pasting the key.`,
+		});
+		return manualKeyLogin(interaction);
+	}
+	return runSsoFlow(interaction, start);
+}
+
+/**
  * SSO browser login, driven through pi's standard auth interaction callbacks.
  * Returns the credential to store; pi persists it for the provider id.
  */
-export async function ssoLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
-	const start = await startCliSso(BASE_URL);
+async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Promise<ApiKeyCredential> {
 	const url = verificationUrl(BASE_URL, start);
 
 	interaction.notify({
@@ -109,12 +162,12 @@ export function createGdProvider(options: GdProviderOptions = {}): Provider {
 
 	const apiKeyAuth: {
 		name: string;
-		login: typeof ssoLogin;
+		login: typeof gdLogin;
 		check: (input: { credential?: ApiKeyCredential }) => Promise<AuthCheck | undefined>;
 		resolve: (input: { credential?: ApiKeyCredential }) => Promise<AuthResult | undefined>;
 	} = {
 		name: "api.girard-davila.net API key",
-		login: ssoLogin,
+		login: gdLogin,
 		check: async ({ credential }) => {
 			if (credential?.key) return { type: "api_key", source: "stored credential" };
 			return (await env(ENV_API_KEY)) ? { type: "api_key", source: ENV_API_KEY } : undefined;

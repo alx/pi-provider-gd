@@ -11,7 +11,10 @@ pi install git:github.com/alx/pi-provider-gd
 ## Features
 
 - **Self-contained** — no `pi-provider-litellm`, no other installs. `pi-provider-gd` registers its own native pi provider (`createProvider` + OpenAI-compatible streaming from `@earendil-works/pi-ai`).
-- **Native `/login gd`** — the standard pi login selector drives the LiteLLM CLI-SSO flow: a browser opens, you sign in with GitHub, the proxy issues a key, pi stores it in `~/.pi/agent/auth.json` under `gd`. No manual key handling.
+- **Native `/login gd`** — pick how to sign in:
+  - **Paste API key** — paste a key created at [https://api.girard-davila.net/api/llm/ui/](https://api.girard-davila.net/api/llm/ui/).
+  - **Sign in with GitHub (browser SSO)** — a browser opens, you sign in with GitHub, the proxy issues a key.
+  Either way pi stores the key in `~/.pi/agent/auth.json` under `gd`. No manual key handling. If the SSO endpoint is unreachable (offline, firewall, …) the flow falls back to pasting the key instead of failing.
 - **`gd/<model-id>`** — models surface under the `gd` provider id in `/model` and `/login`, refreshed live from the proxy's `/v1/models`. No pi restart needed.
 - **OpenAI-compatible streaming** — requests go to `https://api.girard-davila.net/api/llm/v1/chat/completions` with tool-call, thinking, and streaming support via pi-ai's `openai-completions` transport.
 - **Fallbacks** — `GD_API_KEY` env var is honored as an ambient credential; SSO login times out cleanly and re-running `/login gd` resumes.
@@ -26,7 +29,7 @@ That's the only step. Restart pi (or `/reload`) if you installed it mid-session.
 
 ## Log in
 
-Run `/login gd` in pi's interactive mode and pick **api.girard-davila.net** (SSO). A browser opens → sign in with GitHub → back in the terminal the key appears stored. Then:
+Run `/login gd` in pi's interactive mode and pick **api.girard-davila.net**. Choose **Paste API key** (enter a key created at the proxy's [UI](https://api.girard-davila.net/api/llm/ui/)) or **Sign in with GitHub** (a browser opens → sign in → the issued key is polled). Either way the key appears stored in the terminal. Then:
 
 ```
 /model
@@ -37,7 +40,7 @@ Pick any `gd/<model-id>`.
 ## How it works
 
 - `extensions/index.ts` registers one native provider: `createGdProvider()` → `pi.registerProvider(...)`.
-- `src/provider.ts` builds the provider with `createProvider` (pi-ai) + `openAICompletionsApi()`; `auth.apiKey.login` is the SSO browser flow, `fetchModels` polls `/v1/models` with the resolved key.
+- `src/provider.ts` builds the provider with `createProvider` (pi-ai) + `openAICompletionsApi()`; `auth.apiKey.login` offers pasting a key or the SSO browser flow, `fetchModels` polls `/v1/models` with the resolved key.
 - `src/core.ts` holds the pure, testable logic: SSO start/poll (`/sso/cli/start`, `/sso/cli/poll/{id}` with the `x-litellm-cli-poll-secret` header), model listing, auth.json read/store.
 - Credentials live in `~/.pi/agent/auth.json` under `gd` — the same file pi uses for every provider.
 

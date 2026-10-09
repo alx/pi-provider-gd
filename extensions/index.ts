@@ -5,11 +5,12 @@
  *   pi install git:github.com/alx/pi-provider-gd
  *
  * It registers a native pi provider `gd` that streams OpenAI-compatible
- * requests to the endpoint, discovers models from /v1/models, and authenticates
- * via the LiteLLM CLI-SSO flow (browser → GitHub → issued key).
+ * requests to the endpoint and discovers models from /v1/models.
  *
  * After install:
- *   /login gd      — sign in with GitHub in the browser; the key is stored in
+ *   /login gd      — either paste an API key created at
+ *                    https://api.girard-davila.net/api/llm/ui/ or sign in via
+ *                    browser SSO (GitHub → issued key); the key is stored in
  *                    ~/.pi/agent/auth.json under "gd". No hand-editing, no
  *                    separate pi-provider-litellm install.
  *   /model         — pick gd/<model-id>; it appears here, no pi restart.
