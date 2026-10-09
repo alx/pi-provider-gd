@@ -183,7 +183,7 @@ export function createGdProvider(options: GdProviderOptions = {}): Provider {
 	const root = options.baseUrl ?? BASE_URL;
 	return createProvider<"openai-completions">({
 		id: PROVIDER_ID,
-		name: "Girard",
+		name: "Girard-Davila.net provider",
 		baseUrl: root,
 		auth: { apiKey: apiKeyAuth },
 		models: [],
