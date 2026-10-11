@@ -21,6 +21,30 @@ pi install git:github.com/alx/pi-provider-gd
 - **`/gd-doctor`** — in-pi diagnostics: shows the exact cause when a catalog refresh fails (credential state, network error, HTTP status, model list), since pi's `/model` screen hides the underlying error.
 - **OpenAI-compatible streaming** — requests go to `https://api.girard-davila.net/api/llm/v1/chat/completions` with tool-call, thinking, and streaming support via pi-ai's `openai-completions` transport.
 - **Fallbacks** — `GD_API_KEY` env var is honored as an ambient credential; SSO login times out cleanly and re-running `/login gd` resumes.
+- **GPU overflow control** — `/deploy-gpu [max $/hr]`, `gd_deploy_gpu`/`gd_gpu_model` tools, `/teardown-gpu`, and a live `[gd <ledger €> ●● <burn €/h>]` powerline footer (`/gd-footer on`). See below.
+
+## GPU overflow: `/deploy-gpu` + powerline footer
+
+The proxy's dedicated GPU is primary; a rented VAST.ai 3090 is the overflow ("slow mode"), routed through the same LiteLLM group. This package drives the rental end-to-end:
+
+- **`/deploy-gpu [max $/hr]`** (prompt template) — checks the gd VAST user's money (balance **and** credit — either one pays), reuses a running instance or launches one via `vast/scripts/launch.py` (datacenter-only by default; a cold launch takes 10–20 min including the model download), waits until the model is loaded, then switches **this pi session** to `gd/qwen3.8-primary` — the LiteLLM group that includes the VAST overflow row — and finishes. A settle beep (pi-beep) marks readiness.
+- **`gd_deploy_gpu` / `gd_gpu_model`** — the same as tools, for agents.
+- **`/teardown-gpu`** — destroys the instance (stops billing) and blocks the litellm VAST row again.
+
+**Powerline footer segment** (via the bundled `pi-powerline-footer` dependency) — run **`/gd-footer on`** once; the bar then shows, e.g.:
+
+```
+gd 8.22€ ● 0.23€/h
+gd -0.00€ ●● 0.68€/h
+gd 8.22€ !
+```
+
+- **money** = the api.girard-davila.net **ledger** of your gd customer key (LiteLLM `/key/info`): `budget − spend` when a budget is set (red under 10%), or `−spend` in grey when the key has no budget. Never raw VAST funds.
+- **● per running VAST instance** — grey = up/starting, green = ready (model loaded), red = error. Multiple servers: dots and burn aggregate over *all* running VAST instances, so extra `-vast-N` rows show up automatically.
+- **burn** = summed $/h of the running instances.
+- **`!`** (red) = last refresh failed (stale data still shown if any).
+
+`/gd-footer off|status` manage it; the entry is `powerline.customItems` in `~/.pi/agent/settings.json` (id `gd-gpu`, `selfColorize`). Polling is 30 s, best-effort, and silent when no VAST/ledger credentials are present.
 
 ## Install
 
@@ -53,6 +77,7 @@ A failure there means a connectivity/VPN problem on that machine, not a pi probl
 - `extensions/index.ts` registers one native provider: `createGdProvider()` → `pi.registerProvider(...)`, and on `session_start` lands model-less sessions on the default gd model when a credential is stored.
 - `src/provider.ts` builds the provider with `createProvider` (pi-ai) + `openAICompletionsApi()`; `auth.apiKey.login` offers pasting a key or the SSO browser flow, `fetchModels` polls `/v1/models` with the resolved key (strict: network/auth failures surface as refresh errors; limits lookup stays best-effort).
 - `src/core.ts` holds the pure, testable logic: SSO start/poll (`/sso/cli/start`, `/sso/cli/poll/{id}` with the `x-litellm-cli-poll-secret` header), model listing, auth.json read/store.
+- `src/gpu.ts` holds the VAST orchestration: balance gate (`decideBalance` — balance **or** credit pays), running-instance reuse, `scripts.launch` spawn with progress, READY from `state/current.json`. `src/gpu-status.ts` holds the footer: ledger lookup (`/key/info`), instance polling (v1 API), and the ANSI `formatGdStatus` renderer. Keys come from `vast/config.env` (`VAST_API_KEY`, `LITELLM_OPS_KEY`) next to the launcher.
 - Credentials live in `~/.pi/agent/auth.json` under `gd` — the same file pi uses for every provider.
 
 ## Testing
