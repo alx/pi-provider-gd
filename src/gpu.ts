@@ -161,6 +161,8 @@ export interface LauncherSpec {
 export interface DeployOptions {
 	/** Max $/hr cap passed to scripts.launch --price (offer cap). */
 	maxPrice?: number;
+	/** GPU tier passed to scripts.launch --tier. Omitted -> launch.py falls back to $VAST_TIER, then standard. */
+	tier?: "standard" | "premium";
 	apiBase?: string;
 	/**
 	 * Test-only: allow non-datacenter hosts (VAST_ALLOW_NON_DATACENTER=1).
@@ -280,6 +282,7 @@ export async function deployGpu(opts: DeployOptions = {}): Promise<DeployResult>
 	const py = path.join(home, ".venv", "bin", "python");
 	const args = ["-m", "scripts.launch", "--yes"];
 	if (opts.maxPrice !== undefined && opts.maxPrice > 0) args.push("--price", String(opts.maxPrice));
+	if (opts.tier) args.push("--tier", opts.tier);
 	if (opts.allowHome) log("WARNING: --home-ok — non-datacenter hosts ALLOWED (test only, never for production)");
 	const launcher = opts.launcher ?? {
 		file: py,
@@ -313,8 +316,8 @@ export async function deployGpu(opts: DeployOptions = {}): Promise<DeployResult>
  * Tokens: `--price <max $/hr>` (offer cap), `--home-ok` (test: allow
  * non-datacenter hosts). Everything else is an error (explicit > clever).
  */
-export function parseGpuOnArgs(args: string): { maxPrice?: number; homeOk: boolean; error?: string } {
-	const out: { maxPrice?: number; homeOk: boolean; error?: string } = { homeOk: false };
+export function parseGpuOnArgs(args: string): { maxPrice?: number; homeOk: boolean; tier?: "standard" | "premium"; error?: string } {
+	const out: { maxPrice?: number; homeOk: boolean; tier?: "standard" | "premium"; error?: string } = { homeOk: false };
 	const tokens = args.trim().split(/\s+/).filter(Boolean);
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i];
@@ -324,8 +327,11 @@ export function parseGpuOnArgs(args: string): { maxPrice?: number; homeOk: boole
 			out.maxPrice = v;
 		} else if (t === "--home-ok") {
 			out.homeOk = true;
+		} else if (t === "standard" || t === "premium") {
+			if (out.tier) return { homeOk: false, error: `tier given twice (${out.tier}, ${t}) — pass exactly one of: standard | premium` };
+			out.tier = t;
 		} else {
-			return { homeOk: false, error: `unknown parameter ${t} — supported: --price <max $/hr>, --home-ok` };
+			return { homeOk: false, error: `unknown parameter ${t} — supported: [standard|premium], --price <max $/hr>, --home-ok` };
 		}
 	}
 	return out;

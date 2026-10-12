@@ -157,4 +157,11 @@ test("parseGpuOnArgs: bad price → error", () => {
 test("parseGpuOnArgs: unknown token → error", () => {
 	assert.ok(parseGpuOnArgs("--bogus").error);
 	assert.ok(parseGpuOnArgs("hello").error);
+	assert.ok(parseGpuOnArgs("turbo").error);
+});
+
+test("parseGpuOnArgs: tier token", () => {
+	assert.deepEqual(parseGpuOnArgs("premium"), { homeOk: false, tier: "premium" });
+	assert.deepEqual(parseGpuOnArgs("standard --price 1"), { homeOk: false, tier: "standard", maxPrice: 1 });
+	assert.ok(parseGpuOnArgs("premium standard").error);
 });

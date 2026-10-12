@@ -29,7 +29,7 @@ The proxy's dedicated GPU is primary; a rented VAST.ai 3090 is the overflow ("sl
 
 - **`/deploy-gpu [max $/hr]`** (prompt template) — checks the gd VAST user's money (balance **and** credit — either one pays), reuses a running instance or launches one via `vast/scripts/launch.py` (datacenter-only by default; a cold launch takes 10–20 min including the model download), waits until the model is loaded, then switches **this pi session** to `gd/qwen3.8-primary` — the LiteLLM group that includes the VAST overflow row — and finishes. A settle beep (pi-beep) marks readiness.
 - **`gd_deploy_gpu` / `gd_gpu_model`** — the same as tools, for agents.
-- **`/gd-gpu-on [--price <max $/hr>] [--home-ok]`** — creates a VAST GPU instance with sensible defaults (datacenter-only, no price cap = top candidate rate, reuses a running instance, $1.00 min-balance floor). Runs detached (10–20 min) and messages back when READY. `--home-ok` is a test-only override allowing non-datacenter hosts.
+- **`/gd-gpu-on [standard|premium] [--price <max $/hr>] [--home-ok]`** — creates a VAST GPU instance with sensible defaults (datacenter-only, no price cap = top candidate rate, reuses a running instance, $1.00 min-balance floor). Tier: `standard` = RTX 3090 24 GB (default, `$VAST_TIER` wins), `premium` = RTX 5090 32 GB. Runs detached (10–20 min) and messages back when READY. `--home-ok` is a test-only override allowing non-datacenter hosts.
 - **`/gd-gpu-off [instance_id]`** — destroys the instance (stops billing) and blocks the litellm VAST row (down first). No id = the current instance from state/label.
 - **`/gd-gpu`** — status: ledger money, VAST account (balance + credit), running instances with burn rate, local state, and what the footer is showing.
 
