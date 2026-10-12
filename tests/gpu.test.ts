@@ -134,3 +134,27 @@ test("fetchRunningInstances: v1 endpoint, only cur_state=running rows come back"
 test("GPU_MODEL_ID is the group that carries the -vast overflow row", () => {
 	assert.equal(GPU_MODEL_ID, "qwen3.8-primary");
 });
+
+import { parseGpuOnArgs } from "../src/gpu.ts";
+
+test("parseGpuOnArgs: empty → defaults", () => {
+	assert.deepEqual(parseGpuOnArgs(""), { homeOk: false });
+});
+
+test("parseGpuOnArgs: --price + --home-ok", () => {
+	const r = parseGpuOnArgs("--price 0.25 --home-ok");
+	assert.equal(r.maxPrice, 0.25);
+	assert.equal(r.homeOk, true);
+	assert.equal(r.error, undefined);
+});
+
+test("parseGpuOnArgs: bad price → error", () => {
+	assert.ok(parseGpuOnArgs("--price abc").error);
+	assert.ok(parseGpuOnArgs("--price -1").error);
+	assert.ok(parseGpuOnArgs("--price").error);
+});
+
+test("parseGpuOnArgs: unknown token → error", () => {
+	assert.ok(parseGpuOnArgs("--bogus").error);
+	assert.ok(parseGpuOnArgs("hello").error);
+});

@@ -38,7 +38,7 @@ import {
 	fetchModelIdsChecked,
 	getCredential,
 } from "../src/core.ts";
-import { deployGpu, GPU_MODEL_ID, teardownGpu } from "../src/gpu.ts";
+import { deployGpu, fetchGdAccount, GPU_MODEL_ID, parseGpuOnArgs, readGpuState, teardownGpu, vastHome } from "../src/gpu.ts";
 import { FOOTER_DEFAULT_ENV, collectGdStatus, formatGdStatus, readFooterKeys, readGdKey } from "../src/gpu-status.ts";
 
 const DEFAULT_MODEL_DISCOVER_TIMEOUT_MS = 4000;
@@ -260,21 +260,110 @@ export default function gdExtension(pi: ExtensionAPI) {
 	});
 
 	/**
-	 * /teardown-gpu — stop the billing: destroy the VAST instance and block
-	 * the litellm -vast row (scripts.teardown). The on-switch is gd_deploy_gpu.
+	 * /gd-gpu-on — create a gd VAST GPU instance (human switch-on).
+	 * Defaults: datacenter-only (compliance), no price cap (top candidate
+	 * rate), reuse a running instance, min balance floor $1.00.
+	 * Params: [--price <max $/hr>] [--home-ok (test: allow non-DC)].
+	 * Runs detached (10–20 min) and messages back when READY.
 	 */
-	pi.registerCommand("teardown-gpu", {
-		description: "Tear down the gd VAST GPU instance (stops billing) and block the litellm VAST row",
-		async handler() {
-			const lines: string[] = [];
-			try {
-				const res = await teardownGpu({ log: (l) => lines.push(l) });
-				pi.sendMessage({ customType: "teardown-gpu", content: res.ok ? `teardown OK\n${res.tail.split("\n").slice(-8).join("\n")}` : `teardown FAILED (code≠0)\n${res.tail}`, display: true });
-			} catch (e) {
-				pi.sendMessage({ customType: "teardown-gpu", content: `teardown error: ${e instanceof Error ? e.message : String(e)}`, display: true });
+	let gpuOnInFlight = false;
+		pi.registerCommand("gd-gpu-on", {
+			description: "Create a gd VAST GPU instance: /gd-gpu-on [--price <max $/hr>] [--home-ok]",
+			async handler(args: string) {
+				if (gpuOnInFlight) {
+					pi.sendMessage({ customType: "gd-gpu", content: "a /gd-gpu-on is already in flight — watch the footer (grey ●) or run /gd-gpu for status", display: true });
+					return;
+				}
+				const parsed = parseGpuOnArgs(args);
+				if (parsed.error) {
+					pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-on: ${parsed.error}`, display: true });
+					return;
+				}
+				gpuOnInFlight = true;
+				const notes: string[] = [];
+				const params = [parsed.maxPrice !== undefined ? `cap $${parsed.maxPrice}/hr` : "no price cap (top candidate rate)", parsed.homeOk ? "TEST: non-datacenter allowed" : "datacenter-only"];
+				pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-on: launching VAST instance (10–20 min incl. model download) — ${params.join(", ")} — footer dot goes grey while it comes up; you'll get a message when READY.`, display: true });
+				void deployGpu({ maxPrice: parsed.maxPrice, allowHome: parsed.homeOk, log: (l) => notes.push(l) })
+				.then((res) => {
+					pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu READY: instance ${res.instance_id} @ $${(res.hourly_rate ?? 0).toFixed(2)}/hr${res.gpu ? ` on ${res.gpu}` : ""}${res.reused ? " (reused running instance)" : ""}, model ${res.model}\nbalance: ${res.balance_note}\n→ switch this session with the gd_gpu_model tool (default ${GPU_MODEL_ID}) or run /gd-gpu.`, display: true });
+				})
+				.catch((e) => {
+					const tail = notes.slice(-8).join("\n");
+					pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-on FAILED: ${e instanceof Error ? e.message : String(e)}${tail ? `\n--- launcher tail ---\n${tail}` : ""}`, display: true });
+				})
+				.finally(() => {
+					gpuOnInFlight = false;
+				});
+			},
+		});
+
+	/**
+	 * /gd-gpu-off [instance_id] — stop the billing: destroy the VAST instance
+	 * and block the litellm -vast row (scripts.teardown). No id = current
+	 * instance from state/label.
+	 */
+		pi.registerCommand("gd-gpu-off", {
+			description: "Destroy the gd VAST GPU (stops billing) and block the litellm VAST row: /gd-gpu-off [instance_id]",
+			async handler(args: string) {
+				let instanceId: number | undefined;
+				const tok = (args ?? "").trim();
+				if (tok) {
+					const n = Number(tok);
+					if (!Number.isInteger(n) || n <= 0) {
+						pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-off: instance_id must be a positive integer, got "${tok}"`, display: true });
+						return;
+					}
+					instanceId = n;
+				}
+				pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-off: tearing down${instanceId ? ` instance ${instanceId}` : " the current instance"} (blocks the litellm VAST row first — down first) ...`, display: true });
+				try {
+					const res = await teardownGpu({ instanceId, log: () => {} });
+					pi.sendMessage({ customType: "gd-gpu", content: res.ok ? `teardown OK\n${res.tail.split("\n").slice(-8).join("\n")}` : `teardown FAILED (non-zero exit)\n${res.tail}`, display: true });
+				} catch (e) {
+					pi.sendMessage({ customType: "gd-gpu", content: `teardown error: ${e instanceof Error ? e.message : String(e)}`, display: true });
+				}
+			},
+		});
+
+	/** /gd-gpu — status: ledger money, VAST account, running instances, burn, local state. */
+		pi.registerCommand("gd-gpu", {
+			description: "Status of gd GPU instances (ledger, VAST account, running, burn rate)",
+			async handler() {
+				const keys = readFooterKeys(FOOTER_DEFAULT_ENV);
+				const gdKey = readGdKey();
+				if (!keys.opsKey && !keys.vastKey && !gdKey) {
+					pi.sendMessage({ customType: "gd-gpu", content: "gd-gpu: no gd/VAST credentials found (vast/config.env, auth.json) — nothing to show.", display: true });
+					return;
+				}
+				const lines: string[] = ["gd GPU status"];
+				const data = await collectGdStatus({ opsKey: keys.opsKey, vastKey: keys.vastKey, gdKey }).catch(() => null);
+				if (data) {
+					if (data.money) {
+						lines.push(data.money.budget !== null ? `ledger: $${(data.money.budget - data.money.spend).toFixed(2)} available of $${data.money.budget.toFixed(2)} budget (spent $${data.money.spend.toFixed(2)})` : `ledger: -$${data.money.spend.toFixed(2)} spent (no budget set)`);
+					}
+					const gpus = data.gpus ?? [];
+					const burn = gpus.reduce((s, g) => s + g.dph, 0);
+					lines.push(`running: ${gpus.length} instance(s), burn $${burn.toFixed(2)}/hr`);
+					for (const g of gpus) lines.push(`  ${g.state === "ready" ? "● " : "○ "}$${g.dph.toFixed(2)}/hr — ${g.state}`);
+					if (data.apiError) lines.push(`last refresh error: ${data.apiError}`);
+				} else {
+					lines.push("status fetch failed (see footer !) — retry with /gd-gpu.");
+				}
+				if (keys.vastKey) {
+					try {
+						const acc = await fetchGdAccount(vastHome(), keys.vastKey);
+						lines.push(`vast account: $${acc.balance.toFixed(2)} balance + $${acc.credit.toFixed(2)} credit = $${(acc.balance + acc.credit).toFixed(2)} usable`);
+					} catch {
+					lines.push("vast account: (unreachable)");
+				}
 			}
-		},
-	});
+				const st = readGpuState(vastHome());
+				if (st) lines.push(`local state: instance ${st.instance_id ?? "?"}, model ${st.model ?? "?"}, api ${st.api_base ?? "?"}, since ${st.launched_at ?? "?"}`);
+				else lines.push("local state: none (no current instance)");
+				if (data) lines.push(`footer: ${formatGdStatus(data).replace(/\x1b\[[0-9;]*m/g, "")}`);
+				pi.sendMessage({ customType: "gd-gpu", content: lines.join("\n"), display: true });
+			},
+		});
 
 	pi.registerCommand("gd-doctor", {
 		description: `Diagnose the gd provider (credential + ${BASE_URL}/v1/models)`,

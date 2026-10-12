@@ -21,7 +21,7 @@ pi install git:github.com/alx/pi-provider-gd
 - **`/gd-doctor`** — in-pi diagnostics: shows the exact cause when a catalog refresh fails (credential state, network error, HTTP status, model list), since pi's `/model` screen hides the underlying error.
 - **OpenAI-compatible streaming** — requests go to `https://api.girard-davila.net/api/llm/v1/chat/completions` with tool-call, thinking, and streaming support via pi-ai's `openai-completions` transport.
 - **Fallbacks** — `GD_API_KEY` env var is honored as an ambient credential; SSO login times out cleanly and re-running `/login gd` resumes.
-- **GPU overflow control** — `/deploy-gpu [max $/hr]`, `gd_deploy_gpu`/`gd_gpu_model` tools, `/teardown-gpu`, and a live `[gd <ledger €> ●● <burn €/h>]` powerline footer (`/gd-footer on`). See below.
+- **GPU overflow control** — `/gd-gpu-on [params]` / `/gd-gpu-off [instance_id]` / `/gd-gpu` status, `gd_deploy_gpu`/`gd_gpu_model` tools, and a live `[gd <ledger €> ●● <burn €/h>]` powerline footer (`/gd-footer on`). See below.
 
 ## GPU overflow: `/deploy-gpu` + powerline footer
 
@@ -29,7 +29,9 @@ The proxy's dedicated GPU is primary; a rented VAST.ai 3090 is the overflow ("sl
 
 - **`/deploy-gpu [max $/hr]`** (prompt template) — checks the gd VAST user's money (balance **and** credit — either one pays), reuses a running instance or launches one via `vast/scripts/launch.py` (datacenter-only by default; a cold launch takes 10–20 min including the model download), waits until the model is loaded, then switches **this pi session** to `gd/qwen3.8-primary` — the LiteLLM group that includes the VAST overflow row — and finishes. A settle beep (pi-beep) marks readiness.
 - **`gd_deploy_gpu` / `gd_gpu_model`** — the same as tools, for agents.
-- **`/teardown-gpu`** — destroys the instance (stops billing) and blocks the litellm VAST row again.
+- **`/gd-gpu-on [--price <max $/hr>] [--home-ok]`** — creates a VAST GPU instance with sensible defaults (datacenter-only, no price cap = top candidate rate, reuses a running instance, $1.00 min-balance floor). Runs detached (10–20 min) and messages back when READY. `--home-ok` is a test-only override allowing non-datacenter hosts.
+- **`/gd-gpu-off [instance_id]`** — destroys the instance (stops billing) and blocks the litellm VAST row (down first). No id = the current instance from state/label.
+- **`/gd-gpu`** — status: ledger money, VAST account (balance + credit), running instances with burn rate, local state, and what the footer is showing.
 
 **Powerline footer segment** (via the bundled `pi-powerline-footer` dependency) — run **`/gd-footer on`** once; the bar then shows, e.g.:
 

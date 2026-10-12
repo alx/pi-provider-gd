@@ -154,12 +154,21 @@ export interface LauncherSpec {
 	file: string;
 	args: string[];
 	cwd: string;
+	/** Extra env merged over process.env for the child. */
+	env?: Record<string, string>;
 }
 
 export interface DeployOptions {
 	/** Max $/hr cap passed to scripts.launch --price (offer cap). */
 	maxPrice?: number;
 	apiBase?: string;
+	/**
+	 * Test-only: allow non-datacenter hosts (VAST_ALLOW_NON_DATACENTER=1).
+	 * Never for production slow mode.
+	 */
+	allowHome?: boolean;
+	/** /gd-gpu-off [id]: destroy this specific instance (scripts.teardown --id). */
+	instanceId?: number;
 	/** Test hook: run the launcher with this command instead of python. */
 	launcher?: LauncherSpec;
 	log?: (line: string) => void;
@@ -203,7 +212,10 @@ export function readGpuState(vastHomeDir: string): GpuState | null {
 
 function runLauncher(launcher: LauncherSpec, signal: AbortSignal | undefined, onProgress: (line: string) => void): Promise<{ code: number; tail: string }> {
 	return new Promise((resolve) => {
-		const child = spawn(launcher.file, launcher.args, { cwd: launcher.cwd });
+		const child = spawn(launcher.file, launcher.args, {
+			cwd: launcher.cwd,
+			env: launcher.env ? { ...process.env, ...launcher.env } : process.env,
+		});
 		let buf = "";
 		const pipe = (data: Buffer) => {
 			buf += data.toString();
@@ -268,8 +280,13 @@ export async function deployGpu(opts: DeployOptions = {}): Promise<DeployResult>
 	const py = path.join(home, ".venv", "bin", "python");
 	const args = ["-m", "scripts.launch", "--yes"];
 	if (opts.maxPrice !== undefined && opts.maxPrice > 0) args.push("--price", String(opts.maxPrice));
-	const launcher = opts.launcher ?? { file: py, args, cwd: home };
-	log(`launching VAST instance (cold start 10–20 min: search + assign + model download) ...`);
+	if (opts.allowHome) log("WARNING: --home-ok — non-datacenter hosts ALLOWED (test only, never for production)");
+	const launcher = opts.launcher ?? {
+		file: py,
+		args,
+		cwd: home,
+		...(opts.allowHome ? { env: { VAST_ALLOW_NON_DATACENTER: "1" } } : {}),
+	};
 
 	const { code, tail } = await runLauncher(launcher, opts.signal, (line) => log(line));
 
@@ -291,9 +308,34 @@ export async function deployGpu(opts: DeployOptions = {}): Promise<DeployResult>
 }
 
 /** Tear down the running VAST instance (stops billing; launch.py's counterpart). */
+/**
+ * Pure arg parser for `/gd-gpu-on [params]`.
+ * Tokens: `--price <max $/hr>` (offer cap), `--home-ok` (test: allow
+ * non-datacenter hosts). Everything else is an error (explicit > clever).
+ */
+export function parseGpuOnArgs(args: string): { maxPrice?: number; homeOk: boolean; error?: string } {
+	const out: { maxPrice?: number; homeOk: boolean; error?: string } = { homeOk: false };
+	const tokens = args.trim().split(/\s+/).filter(Boolean);
+	for (let i = 0; i < tokens.length; i++) {
+		const t = tokens[i];
+		if (t === "--price") {
+			const v = Number(tokens[++i]);
+			if (!Number.isFinite(v) || v <= 0) return { homeOk: false, error: `--price needs a positive number, got ${tokens[i] ?? "(nothing)"}` };
+			out.maxPrice = v;
+		} else if (t === "--home-ok") {
+			out.homeOk = true;
+		} else {
+			return { homeOk: false, error: `unknown parameter ${t} — supported: --price <max $/hr>, --home-ok` };
+		}
+	}
+	return out;
+}
+
 export async function teardownGpu(opts: DeployOptions = {}): Promise<{ ok: boolean; tail: string }> {
 	const home = vastHome();
-	const launcher = opts.launcher ?? { file: path.join(home, ".venv", "bin", "python"), args: ["-m", "scripts.teardown", "--yes"], cwd: home };
+	const args = ["-m", "scripts.teardown", "--yes"];
+	if (opts.instanceId !== undefined) args.push("--id", String(opts.instanceId));
+	const launcher = opts.launcher ?? { file: path.join(home, ".venv", "bin", "python"), args, cwd: home };
 	const log = opts.log ?? (() => {});
 	const { code, tail } = await runLauncher(launcher, opts.signal, (line) => log(line));
 	return { ok: code === 0, tail };
