@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { BASE_URL } from "./core.ts";
-import { fetchGdAccount, fetchRunningInstances, parseEnvFile, readGpuState, roundCents, vastHome } from "./gpu.ts";
+import { fetchGdAccount, fetchRunningInstances, parseEnvFile, readGpuFailure, readGpuLaunching, readGpuState, roundCents, vastHome } from "./gpu.ts";
 
 // ---------------------------------------------------------------------------
 // Ledger (api.girard-davila.net) — the money shown in the footer comes from
@@ -22,6 +22,7 @@ const ANS = {
 	grey: (s: string) => `\x1b[38;5;245m${s}\x1b[0m`,
 	green: (s: string) => `\x1b[32m${s}\x1b[0m`,
 	red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+	yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
 };
 
 /** Read the gd customer key from the pi agent auth store. */
@@ -48,7 +49,15 @@ export async function fetchLedger(opsKey: string, gdKey: string, baseUrl: string
 	};
 }
 
-export type GpuDotState = "starting" | "ready" | "error";
+/**
+ * Readiness lifecycle of one dot (launch.py markers + VAST + state file):
+ *   waiting  - launch started, GPU not allocated yet (yellow; state/launching.json fresh)
+ *   starting - instance up, model downloading/loading (grey; not in state/current.json)
+ *   ready    - tracked by state/current.json (green; model serving)
+ *   error    - last launch failed (red; state/last_failure.json) or the failed
+ *              instance is still running and billing
+ */
+export type GpuDotState = "waiting" | "starting" | "ready" | "error";
 export interface GpuDot {
 	dph: number;
 	state: GpuDotState;
@@ -56,7 +65,14 @@ export interface GpuDot {
 	hourlyRate?: number;
 	/** Epoch ms when this instance started billing (state/current.json launched_at). */
 	launchedAt?: number;
+	/** Error text for error dots (from last_failure.json). */
+	error?: string;
 }
+
+/** A launching.json older than this is ignored (stuck/killed launch.py). */
+export const LAUNCHING_MAX_AGE_MS = 30 * 60 * 1000;
+/** A last_failure.json older than this stops producing a synthetic red dot. */
+export const FAILURE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 export interface GdStatusInput {
 	/**
@@ -153,7 +169,8 @@ export interface GdFormatOptions {
  * Render the footer value: `8.22€ ●● 0.68€/h`
  *  - money: available (budget - spend) as `x.xx€`, red when < 10% of budget;
  *    no budget -> spend so far as `-x.xx€` (grey).
- *  - one ● per running VAST instance: grey=starting, green=ready, red=error.
+ *  - one ● per running VAST instance: yellow=waiting for GPU, grey=starting
+ *    (model loading), green=ready, red=launch failed.
  *  - burn: summed dph, only when at least one GPU is running; RED when a burn
  *    alert (org-or6b.19) is active, followed by the alert cluster:
  *    red `⏱x.xh` (>= 3h rented) and/or red `⚠x.xh` (VAST runway < 1 day of work).
@@ -177,12 +194,13 @@ export function formatGdStatus(input: GdStatusInput, opts: GdFormatOptions = {})
 	}
 	const gpus = input.gpus ?? [];
 	if (gpus.length > 0) {
+		const color = (s: GpuDotState | "") =>
+			s === "ready" ? ANS.green : s === "error" ? ANS.red : s === "waiting" ? ANS.yellow : ANS.grey;
 		let run = "";
 		let last: GpuDotState | "" = "";
 		const flush = () => {
 			if (run) {
-				const c = last === "ready" ? ANS.green : last === "error" ? ANS.red : ANS.grey;
-				parts.push(c(run));
+				parts.push(color(last)(run));
 				run = "";
 			}
 		};
@@ -218,6 +236,8 @@ export async function collectGdStatus(opts: {
 	vastKey?: string | null;
 	stateHome?: string;
 	apiBase?: string;
+	/** Injection point for tests; defaults to Date.now(). */
+	nowMs?: number;
 } = {}): Promise<GdStatusInput> {
 	const apiError: string[] = [];
 	let money: GdStatusInput["money"] = null;
@@ -228,6 +248,7 @@ export async function collectGdStatus(opts: {
 	const gdKey = opts.gdKey ?? null;
 	const vastKey = opts.vastKey ?? null;
 	const home = opts.stateHome ?? vastHome();
+	const nowMs = opts.nowMs ?? Date.now();
 
 	if (opsKey && gdKey) {
 		try {
@@ -241,15 +262,42 @@ export async function collectGdStatus(opts: {
 		try {
 			const instances = await fetchRunningInstances(vastKey, opts.apiBase);
 			const st = readGpuState(home);
+			const launching = readGpuLaunching(home);
+			const failure = readGpuFailure(home);
+			const launchFresh = launching !== null && nowMs - launching.startedAt < LAUNCHING_MAX_AGE_MS;
+			const failureFresh = failure !== null && nowMs - failure.at < FAILURE_MAX_AGE_MS;
+			const failureRunning =
+				failure !== null && failure.instanceId !== null &&
+				instances.some((i) => i.id === failure.instanceId);
 			gpus = instances.map((i) => {
 				const tracked = st !== null && st.instance_id === i.id;
-				return {
+				// A still-running instance named by the failure marker is an
+				// orphan: billing, but never served (launch failed, destroy failed).
+				const orphan = failureFresh && failure !== null && failure.instanceId === i.id;
+				const dot: {
+					dph: number;
+					state: GpuDotState;
+					hourlyRate?: number;
+					launchedAt?: number;
+					error?: string;
+				} = {
 					dph: i.dph ?? 0,
-					state: tracked ? ("ready" as const) : ("starting" as const),
+					state: tracked ? ("ready" as const) : orphan ? ("error" as const) : ("starting" as const),
 					hourlyRate: tracked ? (st.hourly_rate ?? i.dph ?? 0) : i.dph ?? 0,
 					launchedAt: tracked ? parseUtcZ(st.launched_at) : undefined,
 				};
+				if (orphan && failure) dot.error = failure.error;
+				return dot;
 			});
+			// Synthetic dots: readiness states with no running VAST instance
+			// behind them (launch queued; failed launch whose instance was
+			// already destroyed). Red wins over yellow (failure > waiting).
+			if (failureFresh && !failureRunning) {
+				gpus.push({ dph: 0, state: "error", error: failure !== null ? failure.error : undefined });
+			}
+			if (launchFresh && gpus.length === 0) {
+				gpus.push({ dph: 0, state: "waiting" });
+			}
 		} catch (e) {
 			apiError.push(e instanceof Error ? e.message : String(e));
 		}

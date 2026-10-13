@@ -192,3 +192,103 @@ test("parseUtcZ(): launch.py timestamps → epoch ms, junk → undefined", () =>
 	assert.equal(parseUtcZ(undefined), undefined);
 	assert.equal(parseUtcZ("not-a-time"), undefined);
 });
+
+// ---- Readiness colors (org-or6b.22): waiting/starting/ready/error ----
+
+async function fakeGdStatus(home: string, instances: Array<{ id: number; dph: number }>) {
+	const realFetch = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL) => {
+		const s = String(input);
+		if (s.includes("/instances/")) {
+			return new Response(JSON.stringify({ success: true, instances: instances.map((i) => ({ id: i.id, cur_state: "running", dph_total: i.dph })) }), { headers: { "content-type": "application/json" } });
+		}
+		if (s.includes("/users/current")) {
+			return new Response(JSON.stringify({ balance: 1, credit: 1 }), { headers: { "content-type": "application/json" } });
+		}
+		throw new Error("unexpected url " + s);
+	}) as typeof fetch;
+	const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "gd-state-"));
+	const vastHome = path.join(stateDir, "vast");
+	fs.mkdirSync(path.join(vastHome, "state"), { recursive: true });
+	try {
+		await fs.writeFileSync(path.join(vastHome, "state", "x"), ""); // ensure dir exists
+	} catch { /* noop */ }
+	return { realFetch, stateDir, vastHome };
+}
+
+test("formatGdStatus: waiting → yellow, error → red", () => {
+	const out = formatGdStatus({ gpus: [
+		{ dph: 0, state: "waiting" },
+		{ dph: 0.3, state: "error", error: "no DC offers" },
+	] });
+	assert.ok(out.includes("\x1b[33m"), "waiting should be yellow");
+	assert.ok(out.includes("\x1b[31m"), "error should be red");
+});
+
+test("collectGdStatus: fresh launching marker + no instance → waiting dot", async () => {
+	const { realFetch, stateDir, vastHome } = await fakeGdStatus("", []);
+	fs.writeFileSync(path.join(vastHome, "state", "launching.json"), JSON.stringify({ model: "qwen3.8", tier: "standard", started_at: "2026-10-13T09:00:00Z" }));
+	try {
+		const t = Date.parse("2026-10-13T09:05:00Z"); // 5 min later
+		const data = await collectGdStatus({ vastKey: "vk", stateHome: vastHome, nowMs: t });
+		assert.deepEqual(data.gpus, [{ dph: 0, state: "waiting" }]);
+	} finally {
+		globalThis.fetch = realFetch;
+		fs.rmSync(stateDir, { recursive: true, force: true });
+	}
+});
+
+test("collectGdStatus: stale launching marker → no dot", async () => {
+	const { realFetch, stateDir, vastHome } = await fakeGdStatus("", []);
+	fs.writeFileSync(path.join(vastHome, "state", "launching.json"), JSON.stringify({ model: "qwen3.8", tier: "standard", started_at: "2026-10-13T08:00:00Z" }));
+	try {
+		const t = Date.parse("2026-10-13T09:05:00Z"); // 65 min later (> 30 min)
+		const data = await collectGdStatus({ vastKey: "vk", stateHome: vastHome, nowMs: t });
+		assert.deepEqual(data.gpus, []);
+	} finally {
+		globalThis.fetch = realFetch;
+		fs.rmSync(stateDir, { recursive: true, force: true });
+	}
+});
+
+test("collectGdStatus: fresh failure (no instance) → synthetic red dot", async () => {
+	const { realFetch, stateDir, vastHome } = await fakeGdStatus("", []);
+	fs.writeFileSync(path.join(vastHome, "state", "last_failure.json"), JSON.stringify({ instance_id: null, error: "no DC sm_86 offers", at: "2026-10-13T09:00:00Z" }));
+	try {
+		const t = Date.parse("2026-10-13T09:10:00Z");
+		const data = await collectGdStatus({ vastKey: "vk", stateHome: vastHome, nowMs: t });
+		assert.deepEqual(data.gpus, [{ dph: 0, state: "error", error: "no DC sm_86 offers" }]);
+	} finally {
+		globalThis.fetch = realFetch;
+		fs.rmSync(stateDir, { recursive: true, force: true });
+	}
+});
+
+test("collectGdStatus: failure instance still running → orphan red (no synthetic)", async () => {
+	const { realFetch, stateDir, vastHome } = await fakeGdStatus("", [{ id: 55, dph: 0.2 }]);
+	fs.writeFileSync(path.join(vastHome, "state", "last_failure.json"), JSON.stringify({ instance_id: 55, error: "model never appeared", at: "2026-10-13T09:00:00Z" }));
+	try {
+		const t = Date.parse("2026-10-13T09:10:00Z");
+		const data = await collectGdStatus({ vastKey: "vk", stateHome: vastHome, nowMs: t });
+		assert.equal(data.gpus!.length, 1);
+		assert.equal(data.gpus![0].state, "error");
+		assert.equal(data.gpus![0].error, "model never appeared");
+		assert.equal(data.gpus![0].dph, 0.2);
+	} finally {
+		globalThis.fetch = realFetch;
+		fs.rmSync(stateDir, { recursive: true, force: true });
+	}
+});
+
+test("collectGdStatus: stale failure marker → not red", async () => {
+	const { realFetch, stateDir, vastHome } = await fakeGdStatus("", [{ id: 60, dph: 0.2 }]);
+	fs.writeFileSync(path.join(vastHome, "state", "last_failure.json"), JSON.stringify({ instance_id: 60, error: "old", at: "2026-10-13T06:00:00Z" }));
+	try {
+		const t = Date.parse("2026-10-13T09:10:00Z"); // > 2h later
+		const data = await collectGdStatus({ vastKey: "vk", stateHome: vastHome, nowMs: t });
+		assert.deepEqual(data.gpus, [{ dph: 0.2, state: "starting", hourlyRate: 0.2, launchedAt: undefined }]);
+	} finally {
+		globalThis.fetch = realFetch;
+		fs.rmSync(stateDir, { recursive: true, force: true });
+	}
+});

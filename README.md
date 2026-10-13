@@ -42,7 +42,7 @@ gd 8.22€ !
 ```
 
 - **money** = the api.girard-davila.net **ledger** of your gd customer key (LiteLLM `/key/info`): `budget − spend` when a budget is set (red under 10%), or `−spend` in grey when the key has no budget. Never raw VAST funds.
-- **● per running VAST instance** — grey = up/starting, green = ready (model loaded), red = error. Multiple servers: dots and burn aggregate over *all* running VAST instances, so extra `-vast-N` rows show up automatically.
+- **● per VAST GPU** — the dot tracks the GPU readiness lifecycle: **yellow** = launch started, waiting for a GPU (offer/creation); **grey** = instance up, model downloading/loading; **green** = ready (model loaded, serving); **red** = last launch failed (or the failed instance is still running and billing). Multiple servers: dots and burn aggregate over *all* running VAST instances, plus synthetic dots for waiting/failed states driven by `state/launching.json` and `state/last_failure.json`.
 - **burn** = summed $/h of the running instances; turns **red** when a burn alert is active.
 - **burn alerts** (read-only, they never tear anything down):
   - **`⏱x.xh`** (red) = the tracked instance has been rented for **≥ 3 h** (uptime from `state/current.json` `launched_at`).

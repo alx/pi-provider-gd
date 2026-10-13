@@ -82,8 +82,8 @@ export default function gdExtension(pi: ExtensionAPI) {
 	// this package):  [gd <ledger €> ●● <burn €/h> ⏱x.xh ⚠x.xh]
 	//   money  = api.girard-davila.net ledger of the gd customer key
 	//            (LiteLLM /key/info: budget - spend; no budget → -spend)
-	//   dots   = one ● per running VAST instance
-	//            grey=starting, green=ready, red=error
+	//   dots   = one ● per VAST GPU (plus synthetic dots for waiting/failed):
+	//            yellow=waiting for GPU, grey=model loading, green=ready, red=failed
 	//   burn   = summed $/h of running instances; RED when a burn alert fires
 	//   alerts = org-or6b.19 (decision (c), GD_DAY_HOURS default 8):
 	//            ⏱ red when ≥ BURN_TIME_HOURS (3h) rented (state launched_at)
@@ -185,7 +185,7 @@ export default function gdExtension(pi: ExtensionAPI) {
 				const lines = [
 					`gd-footer entry in ${SETTINGS_PATH}: ${has() ? "present" : "missing (run /gd-footer on)"}`,
 					`status poller: ${gpuPoll ? "running (30s)" : "stopped"}`,
-					"money = gd customer key ledger (budget−spend, or −spend when unlimited) via /key/info; ● per running VAST GPU (grey up / green ready / red error); burn = summed $/h (red = burn alert); ⏱x.xh = ≥3h rented; ⚠x.xh = VAST money left < 1 day of work (GD_DAY_HOURS default 8)",
+					"money = gd customer key ledger (budget−spend, or −spend when unlimited) via /key/info; ● per running VAST GPU (yellow waiting for GPU / grey model loading / green ready / red launch failed); burn = summed $/h (red = burn alert); ⏱x.xh = ≥3h rented; ⚠x.xh = VAST money left < 1 day of work (GD_DAY_HOURS default 8)",
 			];
 				return pi.sendMessage({ customType: "gd-footer", content: lines.join("\n"), display: true });
 			}
@@ -289,7 +289,7 @@ export default function gdExtension(pi: ExtensionAPI) {
 				gpuOnInFlight = true;
 				const notes: string[] = [];
 				const params = [parsed.tier ? `tier ${parsed.tier}` : "tier default ($VAST_TIER or standard)", parsed.model ? `model ${parsed.model}` : "model default (manifest: qwen3.8)", parsed.maxPrice !== undefined ? `cap $${parsed.maxPrice}/hr` : "no price cap (top candidate rate)", parsed.homeOk ? "TEST: non-datacenter allowed" : "datacenter-only"];
-				pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-on: launching VAST instance (10–20 min incl. model download) — ${params.join(", ")} — footer dot goes grey while it comes up; you'll get a message when READY.`, display: true });
+				pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-on: launching VAST instance (10–20 min incl. model download) — ${params.join(", ")} — footer dot: yellow=waiting for GPU, grey=model loading, green=READY.`, display: true });
 				void deployGpu({ maxPrice: parsed.maxPrice, tier: parsed.tier, model: parsed.model, allowHome: parsed.homeOk, log: (l) => notes.push(l) })
 				.then((res) => {
 					pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu READY: instance ${res.instance_id} @ $${(res.hourly_rate ?? 0).toFixed(2)}/hr${res.gpu ? ` on ${res.gpu}` : ""}${res.reused ? " (reused running instance)" : ""}, model ${res.model}\nbalance: ${res.balance_note}\n→ switch this session with the gd_gpu_model tool (default ${GPU_MODEL_ID}) or run /gd-gpu.`, display: true });
@@ -351,7 +351,10 @@ export default function gdExtension(pi: ExtensionAPI) {
 					const gpus = data.gpus ?? [];
 					const burn = gpus.reduce((s, g) => s + g.dph, 0);
 					lines.push(`running: ${gpus.length} instance(s), burn $${burn.toFixed(2)}/hr`);
-					for (const g of gpus) lines.push(`  ${g.state === "ready" ? "● " : "○ "}$${g.dph.toFixed(2)}/hr — ${g.state}`);
+					for (const g of gpus) {
+						const mark = g.state === "ready" ? "● " : g.state === "error" ? "✖ " : "○ ";
+						lines.push(`  ${mark}$${g.dph.toFixed(2)}/hr — ${g.state}${g.error ? ` (${g.error})` : ""}`);
+					}
 					for (const a of computeBurnAlerts(data, Date.now(), dayHours())) lines.push(`burn alert [${a.kind}]: ${a.detail}`);
 					if (data.vastUsd !== null && data.vastUsd !== undefined) lines.push(`vast money left (runway basis): $${data.vastUsd.toFixed(2)}`);
 					if (data.apiError) lines.push(`last refresh error: ${data.apiError}`);

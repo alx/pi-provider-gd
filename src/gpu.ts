@@ -214,6 +214,43 @@ export function readGpuState(vastHomeDir: string): GpuState | null {
 	}
 }
 
+/** 'Launch in flight' marker written by launch.py (state/launching.json). */
+export interface LaunchingMarker {
+	model: string;
+	tier: string;
+	startedAt: number;
+}
+
+/** 'Last launch failed' marker written by launch.py (state/last_failure.json). */
+export interface FailureMarker {
+	instanceId: number | null;
+	error: string;
+	at: number;
+}
+
+export function readGpuLaunching(vastHomeDir: string): LaunchingMarker | null {
+	try {
+		const d = JSON.parse(fs.readFileSync(path.join(vastHomeDir, "state", "launching.json"), "utf8")) as Record<string, unknown>;
+		const t = Date.parse(String(d.started_at));
+		if (!Number.isFinite(t)) return null;
+		return { model: String(d.model ?? ""), tier: String(d.tier ?? ""), startedAt: t };
+	} catch {
+		return null;
+	}
+}
+
+export function readGpuFailure(vastHomeDir: string): FailureMarker | null {
+	try {
+		const d = JSON.parse(fs.readFileSync(path.join(vastHomeDir, "state", "last_failure.json"), "utf8")) as Record<string, unknown>;
+		const t = Date.parse(String(d.at));
+		if (!Number.isFinite(t)) return null;
+		const iid = d.instance_id;
+		return { instanceId: typeof iid === "number" ? iid : null, error: String(d.error ?? ""), at: t };
+	} catch {
+		return null;
+	}
+}
+
 function runLauncher(launcher: LauncherSpec, signal: AbortSignal | undefined, onProgress: (line: string) => void): Promise<{ code: number; tail: string }> {
 	return new Promise((resolve) => {
 		const child = spawn(launcher.file, launcher.args, {
