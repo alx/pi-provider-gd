@@ -40,8 +40,45 @@ import {
 } from "../src/core.ts";
 import { deployGpu, fetchGdAccount, GPU_MODEL_ID, parseGpuOnArgs, readGpuState, teardownGpu, vastHome } from "../src/gpu.ts";
 import { FOOTER_DEFAULT_ENV, collectGdStatus, computeBurnAlerts, dayHours, formatGdStatus, readFooterKeys, readGdKey } from "../src/gpu-status.ts";
+import { spawn } from "node:child_process";
 
 const DEFAULT_MODEL_DISCOVER_TIMEOUT_MS = 4000;
+
+// Customer-facing billing entry (org-cusm.9.10 / org-wfx.1): pay from Pi.
+// The LiteLLM proxy (BASE_URL=/api/llm) and the billing service
+// (/billing, behind Caddy) are separate origins under the same host.
+const BILLING_BASE = "https://api.girard-davila.net/billing";
+
+function openUrl(url: string): void {
+	// Best-effort local opener; the URL is always printed so a headless/remote
+	// pi can still complete the checkout.
+	try {
+		const cmd = process.platform === "darwin"
+			? ["open", url]
+			: process.platform === "win32"
+				? ["cmd", "/c", "start", "", url]
+				: ["xdg-open", url];
+		spawn(cmd[0], cmd.slice(1), { stdio: "ignore", detached: true }).unref();
+	} catch {
+		/* fall through - user opens the printed URL */
+	}
+}
+
+async function billingPost<T>(path: string, body: unknown): Promise<{ ok: boolean; status: number; data: T }> {
+	let res: Response;
+	try {
+		res = await fetch(`${BILLING_BASE}${path}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	} catch (e) {
+		return { ok: false, status: 0, data: ({ error: String(e) }) as T };
+	}
+	let data: unknown = {};
+	try { data = await res.json(); } catch { /* body may be empty */ }
+	return { ok: res.ok, status: res.status, data: data as T };
+}
 
 export default function gdExtension(pi: ExtensionAPI) {
 	pi.registerProvider(createGdProvider());
@@ -377,6 +414,65 @@ export default function gdExtension(pi: ExtensionAPI) {
 			},
 		});
 
+	pi.registerCommand("gd-pay", {
+		description: "Start a gd payment from Pi: /gd-pay tokens [5|10|25] [email], /gd-pay rental, or /gd-pay alone for account + guidance",
+		async handler(args: string) {
+			const parts = args.trim().split(/\s+/).filter(Boolean);
+			const mode = parts[0] || "";
+			const gdKey = readGdKey();
+			let user = "";
+			let flowLocked = false;
+			if (gdKey) {
+				try {
+					const r = await fetch(`${BILLING_BASE}/account`, { headers: { "x-gd-key": gdKey } });
+					if (r.ok) {
+						const a = (await r.json()) as { user?: string; flow_locked?: boolean };
+						user = a.user ?? "";
+						flowLocked = !!a.flow_locked;
+					}
+				} catch { /* probe is best-effort */ }
+			}
+			if (mode === "tokens") {
+				const size = (parts[1] || "5").trim();
+				const pack = ["5", "10", "25"].includes(size) ? Number(size) : 0;
+				if (!pack) {
+					pi.sendMessage({ customType: "gd-pay", content: `gd-pay tokens: pack must be 5, 10 or 25 (got "${size}"). Usage: /gd-pay tokens [5|10|25] [email]`, display: true });
+					return;
+				}
+				const email = (parts[2] || user || "").trim();
+				if (!email) {
+					pi.sendMessage({ customType: "gd-pay", content: "gd-pay tokens: need the email for this account. Pass it: /gd-pay tokens 10 you@email.com", display: true });
+					return;
+				}
+				try {
+					const r = await billingPost<{ checkout_url?: string }>("/checkout/tokens", { user_email: email, pack_usd: pack });
+					if (!r.ok || !r.data?.checkout_url) {
+						const body = JSON.stringify(r.data).slice(0, 240);
+						pi.sendMessage({ customType: "gd-pay", content: `gd-pay tokens: checkout failed (HTTP ${r.status}) ${body}`, display: true });
+						return;
+					}
+					openUrl(r.data.checkout_url);
+					pi.sendMessage({ customType: "gd-pay", content: `gd-pay tokens: opened $${pack} token pack checkout for ${email}\n${r.data.checkout_url}`, display: true });
+				} catch (e) {
+					pi.sendMessage({ customType: "gd-pay", content: `gd-pay tokens error: ${e instanceof Error ? e.message : String(e)}`, display: true });
+				}
+				return;
+			}
+			if (mode === "rental") {
+				const hint = flowLocked ? " (self-hosted flow is currently locked - the operator unlocks one at a time)" : "";
+				pi.sendMessage({ customType: "gd-pay", content: `gd-pay rental: GPU rentals are quoted and unlocked one at a time by the operator${hint}. Contact us via girard-davila.net/models - once unlocked, the rental launches automatically.`, display: true });
+				return;
+			}
+			const lines = [
+				`gd-pay - payment from Pi${gdKey ? "" : " (no gd key stored - run /login gd first)"}`,
+				"  /gd-pay tokens [5|10|25] [email]   buy token credits (Stripe checkout)",
+				"  /gd-pay rental                    GPU rental (quoted + unlocked by the operator)",
+				flowLocked ? "Self-hosted GPU flow is currently LOCKED (guided beta) - rentals are unlocked one at a time." : "",
+				user ? `account: ${user}` : "",
+			].filter(Boolean);
+			pi.sendMessage({ customType: "gd-pay", content: lines.join("\n"), display: true });
+		},
+	});
 	pi.registerCommand("gd-doctor", {
 		description: `Diagnose the gd provider (credential + ${BASE_URL}/v1/models)`,
 		async handler() {

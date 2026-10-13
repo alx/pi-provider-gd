@@ -149,7 +149,7 @@ export function computeBurnAlerts(input: GdStatusInput, nowMs: number, dayH: num
 			alerts.push({
 				kind: "runway",
 				value: days,
-				detail: `$${input.vastUsd.toFixed(2)} VAST left ≈ ${Math.max(0, days * dayH).toFixed(1)}h of work (${dayH}h-day budget)`,
+				detail: `$${input.vastUsd.toFixed(2)} VAST left ≈ ${Math.max(0, days * dayH).toFixed(1)}h of work (${dayH}h-day budget) - /gd-pay to top up`,
 			});
 		}
 	}
