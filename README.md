@@ -43,7 +43,10 @@ gd 8.22€ !
 
 - **money** = the api.girard-davila.net **ledger** of your gd customer key (LiteLLM `/key/info`): `budget − spend` when a budget is set (red under 10%), or `−spend` in grey when the key has no budget. Never raw VAST funds.
 - **● per running VAST instance** — grey = up/starting, green = ready (model loaded), red = error. Multiple servers: dots and burn aggregate over *all* running VAST instances, so extra `-vast-N` rows show up automatically.
-- **burn** = summed $/h of the running instances.
+- **burn** = summed $/h of the running instances; turns **red** when a burn alert is active.
+- **burn alerts** (read-only, they never tear anything down):
+  - **`⏱x.xh`** (red) = the tracked instance has been rented for **≥ 3 h** (uptime from `state/current.json` `launched_at`).
+  - **`⚠x.xh`** (red) = remaining VAST money (balance + credit) buys **less than one workday of work** at the current burn: `money ÷ (burn × GD_DAY_HOURS) < 1`. `GD_DAY_HOURS` defaults to **8**, env-overridable. The number is hours of work left.
 - **`!`** (red) = last refresh failed (stale data still shown if any).
 
 `/gd-footer off|status` manage it; the entry is `powerline.customItems` in `~/.pi/agent/settings.json` (id `gd-gpu`, `selfColorize`). Polling is 30 s, best-effort, and silent when no VAST/ledger credentials are present.

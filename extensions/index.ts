@@ -39,7 +39,7 @@ import {
 	getCredential,
 } from "../src/core.ts";
 import { deployGpu, fetchGdAccount, GPU_MODEL_ID, parseGpuOnArgs, readGpuState, teardownGpu, vastHome } from "../src/gpu.ts";
-import { FOOTER_DEFAULT_ENV, collectGdStatus, formatGdStatus, readFooterKeys, readGdKey } from "../src/gpu-status.ts";
+import { FOOTER_DEFAULT_ENV, collectGdStatus, computeBurnAlerts, dayHours, formatGdStatus, readFooterKeys, readGdKey } from "../src/gpu-status.ts";
 
 const DEFAULT_MODEL_DISCOVER_TIMEOUT_MS = 4000;
 
@@ -79,12 +79,17 @@ export default function gdExtension(pi: ExtensionAPI) {
 
 	// ------------------------------------------------------------------
 	// gd-gpu powerline footer segment (needs pi-powerline-footer, a dep of
-	// this package):  [gd <ledger €> ●● <burn €/h>]
+	// this package):  [gd <ledger €> ●● <burn €/h> ⏱x.xh ⚠x.xh]
 	//   money  = api.girard-davila.net ledger of the gd customer key
 	//            (LiteLLM /key/info: budget - spend; no budget → -spend)
 	//   dots   = one ● per running VAST instance
 	//            grey=starting, green=ready, red=error
-	//   burn   = summed $/h of running instances
+	//   burn   = summed $/h of running instances; RED when a burn alert fires
+	//   alerts = org-or6b.19 (decision (c), GD_DAY_HOURS default 8):
+	//            ⏱ red when ≥ BURN_TIME_HOURS (3h) rented (state launched_at)
+	//            ⚠ red when remaining VAST money < 1 day of work at current
+	//              burn (VAST balance + credit ÷ (burn × GD_DAY_HOURS) < 1)
+	//            Read-only: the footer changes color, it never tears down.
 	// Multiple servers: dots+burn aggregate over ALL running VAST instances
 	// (v1 API), so extra -vast-2/-vast-3 rows / multiple llama.cpp servers
 	// show up without changes; per-instance readiness maps through the local
@@ -180,7 +185,7 @@ export default function gdExtension(pi: ExtensionAPI) {
 				const lines = [
 					`gd-footer entry in ${SETTINGS_PATH}: ${has() ? "present" : "missing (run /gd-footer on)"}`,
 					`status poller: ${gpuPoll ? "running (30s)" : "stopped"}`,
-					"money = gd customer key ledger (budget−spend, or −spend when unlimited) via /key/info; ● per running VAST GPU (grey up / green ready / red error); burn = summed $/h.",
+					"money = gd customer key ledger (budget−spend, or −spend when unlimited) via /key/info; ● per running VAST GPU (grey up / green ready / red error); burn = summed $/h (red = burn alert); ⏱x.xh = ≥3h rented; ⚠x.xh = VAST money left < 1 day of work (GD_DAY_HOURS default 8)",
 			];
 				return pi.sendMessage({ customType: "gd-footer", content: lines.join("\n"), display: true });
 			}
@@ -347,6 +352,8 @@ export default function gdExtension(pi: ExtensionAPI) {
 					const burn = gpus.reduce((s, g) => s + g.dph, 0);
 					lines.push(`running: ${gpus.length} instance(s), burn $${burn.toFixed(2)}/hr`);
 					for (const g of gpus) lines.push(`  ${g.state === "ready" ? "● " : "○ "}$${g.dph.toFixed(2)}/hr — ${g.state}`);
+					for (const a of computeBurnAlerts(data, Date.now(), dayHours())) lines.push(`burn alert [${a.kind}]: ${a.detail}`);
+					if (data.vastUsd !== null && data.vastUsd !== undefined) lines.push(`vast money left (runway basis): $${data.vastUsd.toFixed(2)}`);
 					if (data.apiError) lines.push(`last refresh error: ${data.apiError}`);
 				} else {
 					lines.push("status fetch failed (see footer !) — retry with /gd-gpu.");

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { BASE_URL } from "./core.ts";
-import { fetchRunningInstances, parseEnvFile, readGpuState, vastHome } from "./gpu.ts";
+import { fetchGdAccount, fetchRunningInstances, parseEnvFile, readGpuState, roundCents, vastHome } from "./gpu.ts";
 
 // ---------------------------------------------------------------------------
 // Ledger (api.girard-davila.net) — the money shown in the footer comes from
@@ -52,6 +52,10 @@ export type GpuDotState = "starting" | "ready" | "error";
 export interface GpuDot {
 	dph: number;
 	state: GpuDotState;
+	/** $/hr for this instance (state hourly_rate, else dph_total). */
+	hourlyRate?: number;
+	/** Epoch ms when this instance started billing (state/current.json launched_at). */
+	launchedAt?: number;
 }
 
 export interface GdStatusInput {
@@ -61,8 +65,79 @@ export interface GdStatusInput {
 	 */
 	money?: { budget: number | null; spend: number } | null;
 	gpus?: GpuDot[];
+	/**
+	 * Remaining gd VAST account money (balance + credit, the same total
+	 * decideBalance uses) in USD. null = unknown/error.
+	 */
+	vastUsd?: number | null;
 	/** Last fetch error, if any (stale data may still be shown). */
 	apiError?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Burn alerts (org-or6b.19, decision (c) of org-or6b.2 — FINAL):
+//   (1) TIME:    >= 3h rented (uptime from state launched_at)
+//   (2) RUNWAY:  remaining VAST money / (burn x GD_DAY_HOURS) < 1 day of work
+// GD_DAY_HOURS = active hours per workday, default 8, env-overridable.
+// ---------------------------------------------------------------------------
+
+export const BURN_TIME_HOURS = 3;
+export const ENV_GD_DAY_HOURS = "GD_DAY_HOURS";
+export const DEFAULT_DAY_HOURS = 8;
+
+/** GD_DAY_HOURS from env (default 8, positive-number validated). */
+export function dayHours(): number {
+	const raw = process.env[ENV_GD_DAY_HOURS];
+	const n = raw === undefined ? NaN : Number.parseFloat(raw);
+	return Number.isFinite(n) && n > 0 ? n : DEFAULT_DAY_HOURS;
+}
+
+/** Parse launch.py state 'launched_at' (UTC 'YYYY-MM-DDTHH:MM:SSZ') to epoch ms. */
+export function parseUtcZ(s: string | undefined): number | undefined {
+	if (!s) return undefined;
+	const t = Date.parse(s);
+	return Number.isFinite(t) ? t : undefined;
+}
+
+export interface BurnAlert {
+	kind: "time" | "runway";
+	/** time: hours rented; runway: days of work remaining (< 1). */
+	value: number;
+	detail: string;
+}
+
+/**
+ * Pure evaluation of the two burn thresholds (org-or6b.19). Read-only —
+ * the footer never tears anything down; it only makes the burn visible.
+ */
+export function computeBurnAlerts(input: GdStatusInput, nowMs: number, dayH: number): BurnAlert[] {
+	const alerts: BurnAlert[] = [];
+	const gpus = input.gpus ?? [];
+	let maxHours = 0;
+	for (const g of gpus) {
+		if (g.launchedAt === undefined) continue;
+		const hours = (nowMs - g.launchedAt) / 3.6e6;
+		if (hours > maxHours) maxHours = hours;
+	}
+	const burn = gpus.reduce((s, g) => s + (Number.isFinite(g.dph) ? g.dph : 0), 0);
+	if (maxHours >= BURN_TIME_HOURS) {
+		alerts.push({
+			kind: "time",
+			value: maxHours,
+			detail: `${maxHours.toFixed(1)}h rented (~$${(burn * maxHours).toFixed(2)} at current burn)`,
+		});
+	}
+	if (input.vastUsd !== null && input.vastUsd !== undefined && burn > 0 && dayH > 0) {
+		const days = input.vastUsd / (burn * dayH);
+		if (days < 1) {
+			alerts.push({
+				kind: "runway",
+				value: days,
+				detail: `$${input.vastUsd.toFixed(2)} VAST left ≈ ${Math.max(0, days * dayH).toFixed(1)}h of work (${dayH}h-day budget)`,
+			});
+		}
+	}
+	return alerts;
 }
 
 const euro = (n: number) => `${(Math.round(n * 100) / 100).toFixed(2)}€`;
@@ -72,10 +147,22 @@ const euro = (n: number) => `${(Math.round(n * 100) / 100).toFixed(2)}€`;
  *  - money: available (budget - spend) as `x.xx€`, red when < 10% of budget;
  *    no budget -> spend so far as `-x.xx€` (grey).
  *  - one ● per running VAST instance: grey=starting, green=ready, red=error.
- *  - burn: summed dph, only when at least one GPU is running.
+ *  - burn: summed dph, only when at least one GPU is running; RED when a burn
+ *    alert (org-or6b.19) is active, followed by the alert cluster:
+ *    red `⏱x.xh` (>= 3h rented) and/or red `⚠x.xh` (VAST runway < 1 day of work).
  *  - apiError: red `!` (stale data, if any, still shown).
  */
-export function formatGdStatus(input: GdStatusInput): string {
+export interface GdFormatOptions {
+	/** Injection point for tests; defaults to Date.now(). */
+	nowMs?: number;
+	/** Workday length in hours for the runway threshold; defaults to dayHours(). */
+	dayHours?: number;
+}
+
+export function formatGdStatus(input: GdStatusInput, opts: GdFormatOptions = {}): string {
+	const nowMs = opts.nowMs ?? Date.now();
+	const dayH = opts.dayHours ?? dayHours();
+	const alerts = computeBurnAlerts(input, nowMs, dayH);
 	const parts: string[] = [];
 	const m = input.money ?? null;
 	if (m) {
@@ -107,7 +194,14 @@ export function formatGdStatus(input: GdStatusInput): string {
 		}
 		flush();
 		const burn = gpus.reduce((s, g) => s + (Number.isFinite(g.dph) ? g.dph : 0), 0);
-		parts.push(`${euro(burn)}/h`);
+		parts.push(alerts.length > 0 ? ANS.red(`${euro(burn)}/h`) : `${euro(burn)}/h`);
+		for (const a of alerts) {
+			parts.push(
+				a.kind === "time"
+					? ANS.red(`⏱${a.value.toFixed(1)}h`)
+					: ANS.red(`⚠${Math.max(0, a.value * dayH).toFixed(1)}h`),
+			);
+		}
 	}
 	if (input.apiError) parts.push(ANS.red("!"));
 	return parts.join(" ");
@@ -122,10 +216,12 @@ export async function collectGdStatus(opts: {
 	gdKey?: string | null;
 	vastKey?: string | null;
 	stateHome?: string;
+	apiBase?: string;
 } = {}): Promise<GdStatusInput> {
 	const apiError: string[] = [];
 	let money: GdStatusInput["money"] = null;
 	let gpus: GpuDot[] = [];
+	let vastUsd: number | null = null;
 
 	const opsKey = opts.opsKey ?? null;
 	const gdKey = opts.gdKey ?? null;
@@ -142,12 +238,26 @@ export async function collectGdStatus(opts: {
 	}
 	if (vastKey) {
 		try {
-			const instances = await fetchRunningInstances(vastKey);
+			const instances = await fetchRunningInstances(vastKey, opts.apiBase);
 			const st = readGpuState(home);
-			gpus = instances.map((i) => ({
-				dph: i.dph ?? 0,
-				state: st && st.instance_id === i.id ? ("ready" as const) : ("starting" as const),
-			}));
+			gpus = instances.map((i) => {
+				const tracked = st !== null && st.instance_id === i.id;
+				return {
+					dph: i.dph ?? 0,
+					state: tracked ? ("ready" as const) : ("starting" as const),
+					hourlyRate: tracked ? (st.hourly_rate ?? i.dph ?? 0) : i.dph ?? 0,
+					launchedAt: tracked ? parseUtcZ(st.launched_at) : undefined,
+				};
+			});
+		} catch (e) {
+			apiError.push(e instanceof Error ? e.message : String(e));
+		}
+		// Remaining VAST money (balance + credit — the same total decideBalance
+		// uses) feeds the runway threshold (org-or6b.19). Separate try: an
+		// account-call failure must not hide the instance dots.
+		try {
+			const account = await fetchGdAccount(home, vastKey, opts.apiBase);
+			vastUsd = roundCents(account.balance + account.credit);
 		} catch (e) {
 			apiError.push(e instanceof Error ? e.message : String(e));
 		}
@@ -155,6 +265,7 @@ export async function collectGdStatus(opts: {
 	return {
 		money,
 		gpus,
+		vastUsd,
 		apiError: apiError.length > 0 ? apiError.join("; ") : null,
 	};
 }
