@@ -142,6 +142,13 @@ export function computeBurnAlerts(input: GdStatusInput, nowMs: number, dayH: num
 
 const euro = (n: number) => `${(Math.round(n * 100) / 100).toFixed(2)}€`;
 
+export interface GdFormatOptions {
+	/** Injection point for tests; defaults to Date.now(). */
+	nowMs?: number;
+	/** Workday length in hours for the runway threshold; defaults to dayHours(). */
+	dayHours?: number;
+}
+
 /**
  * Render the footer value: `8.22€ ●● 0.68€/h`
  *  - money: available (budget - spend) as `x.xx€`, red when < 10% of budget;
@@ -152,12 +159,6 @@ const euro = (n: number) => `${(Math.round(n * 100) / 100).toFixed(2)}€`;
  *    red `⏱x.xh` (>= 3h rented) and/or red `⚠x.xh` (VAST runway < 1 day of work).
  *  - apiError: red `!` (stale data, if any, still shown).
  */
-export interface GdFormatOptions {
-	/** Injection point for tests; defaults to Date.now(). */
-	nowMs?: number;
-	/** Workday length in hours for the runway threshold; defaults to dayHours(). */
-	dayHours?: number;
-}
 
 export function formatGdStatus(input: GdStatusInput, opts: GdFormatOptions = {}): string {
 	const nowMs = opts.nowMs ?? Date.now();
