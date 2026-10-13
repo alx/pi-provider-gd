@@ -154,10 +154,30 @@ test("parseGpuOnArgs: bad price → error", () => {
 	assert.ok(parseGpuOnArgs("--price").error);
 });
 
-test("parseGpuOnArgs: unknown token → error", () => {
+test("parseGpuOnArgs: unknown flag → error", () => {
 	assert.ok(parseGpuOnArgs("--bogus").error);
-	assert.ok(parseGpuOnArgs("hello").error);
-	assert.ok(parseGpuOnArgs("turbo").error);
+});
+
+test("parseGpuOnArgs: bare token = model id (org-or6b.8)", () => {
+	// bare positionals are model ids, validated by launch.py (exit 2, no
+	// billing) — a typo'd model surfaces launch.py's 'unknown model' error.
+	const a = parseGpuOnArgs("llama8");
+	assert.equal(a.model, "llama8");
+	assert.equal(a.error, undefined);
+	const b = parseGpuOnArgs("qwen3.8");
+	assert.equal(b.model, "qwen3.8");
+	const c = parseGpuOnArgs("premium llama8");
+	assert.equal(c.tier, "premium");
+	assert.equal(c.model, "llama8");
+	const d = parseGpuOnArgs("standard llama8 --price 0.4");
+	assert.equal(d.tier, "standard");
+	assert.equal(d.model, "llama8");
+	assert.equal(d.maxPrice, 0.4);
+	assert.ok(parseGpuOnArgs("llama8 qwen3.8").error); // two models
+	assert.ok(parseGpuOnArgs("llama8 --model qwen3.8").error); // model twice
+	const e = parseGpuOnArgs("--model llama8");
+	assert.equal(e.model, "llama8");
+	assert.ok(parseGpuOnArgs("--model").error);
 });
 
 test("parseGpuOnArgs: tier token", () => {

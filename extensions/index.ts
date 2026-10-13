@@ -263,12 +263,14 @@ export default function gdExtension(pi: ExtensionAPI) {
 	 * /gd-gpu-on — create a gd VAST GPU instance (human switch-on).
 	 * Defaults: datacenter-only (compliance), no price cap (top candidate
 	 * rate), reuse a running instance, min balance floor $1.00.
-	 * Params: [standard|premium] [--price <max $/hr>] [--home-ok (test: allow non-DC)].
+	 * Params: [standard|premium] [model] [--price <max $/hr>] [--home-ok (test: allow non-DC)].
+	 * A bare positional (other than the tier) is the vast/models.json model id
+	 * (org-or6b.8), forwarded to scripts.launch --model.
 	 * Runs detached (10–20 min) and messages back when READY.
 	 */
 	let gpuOnInFlight = false;
 		pi.registerCommand("gd-gpu-on", {
-			description: "Create a gd VAST GPU instance: /gd-gpu-on [standard|premium] [--price <max $/hr>] [--home-ok]",
+			description: "Create a gd VAST GPU instance: /gd-gpu-on [standard|premium] [model] [--price <max $/hr>] [--home-ok]", 
 			async handler(args: string) {
 				if (gpuOnInFlight) {
 					pi.sendMessage({ customType: "gd-gpu", content: "a /gd-gpu-on is already in flight — watch the footer (grey ●) or run /gd-gpu for status", display: true });
@@ -281,9 +283,9 @@ export default function gdExtension(pi: ExtensionAPI) {
 				}
 				gpuOnInFlight = true;
 				const notes: string[] = [];
-				const params = [parsed.tier ? `tier ${parsed.tier}` : "tier default ($VAST_TIER or standard)", parsed.maxPrice !== undefined ? `cap $${parsed.maxPrice}/hr` : "no price cap (top candidate rate)", parsed.homeOk ? "TEST: non-datacenter allowed" : "datacenter-only"];
+				const params = [parsed.tier ? `tier ${parsed.tier}` : "tier default ($VAST_TIER or standard)", parsed.model ? `model ${parsed.model}` : "model default (manifest: qwen3.8)", parsed.maxPrice !== undefined ? `cap $${parsed.maxPrice}/hr` : "no price cap (top candidate rate)", parsed.homeOk ? "TEST: non-datacenter allowed" : "datacenter-only"];
 				pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu-on: launching VAST instance (10–20 min incl. model download) — ${params.join(", ")} — footer dot goes grey while it comes up; you'll get a message when READY.`, display: true });
-				void deployGpu({ maxPrice: parsed.maxPrice, tier: parsed.tier, allowHome: parsed.homeOk, log: (l) => notes.push(l) })
+				void deployGpu({ maxPrice: parsed.maxPrice, tier: parsed.tier, model: parsed.model, allowHome: parsed.homeOk, log: (l) => notes.push(l) })
 				.then((res) => {
 					pi.sendMessage({ customType: "gd-gpu", content: `gd-gpu READY: instance ${res.instance_id} @ $${(res.hourly_rate ?? 0).toFixed(2)}/hr${res.gpu ? ` on ${res.gpu}` : ""}${res.reused ? " (reused running instance)" : ""}, model ${res.model}\nbalance: ${res.balance_note}\n→ switch this session with the gd_gpu_model tool (default ${GPU_MODEL_ID}) or run /gd-gpu.`, display: true });
 				})

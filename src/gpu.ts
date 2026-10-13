@@ -163,6 +163,8 @@ export interface DeployOptions {
 	maxPrice?: number;
 	/** GPU tier passed to scripts.launch --tier. Omitted -> launch.py falls back to $VAST_TIER, then standard. */
 	tier?: "standard" | "premium";
+	/** Model id from vast/models.json passed to scripts.launch --model (org-or6b.8). Omitted -> manifest default (qwen3.8). */
+	model?: string;
 	apiBase?: string;
 	/**
 	 * Test-only: allow non-datacenter hosts (VAST_ALLOW_NON_DATACENTER=1).
@@ -283,6 +285,7 @@ export async function deployGpu(opts: DeployOptions = {}): Promise<DeployResult>
 	const args = ["-m", "scripts.launch", "--yes"];
 	if (opts.maxPrice !== undefined && opts.maxPrice > 0) args.push("--price", String(opts.maxPrice));
 	if (opts.tier) args.push("--tier", opts.tier);
+	if (opts.model) args.push("--model", opts.model);
 	if (opts.allowHome) log("WARNING: --home-ok — non-datacenter hosts ALLOWED (test only, never for production)");
 	const launcher = opts.launcher ?? {
 		file: py,
@@ -314,10 +317,12 @@ export async function deployGpu(opts: DeployOptions = {}): Promise<DeployResult>
 /**
  * Pure arg parser for `/gd-gpu-on [params]`.
  * Tokens: `--price <max $/hr>` (offer cap), `--home-ok` (test: allow
- * non-datacenter hosts). Everything else is an error (explicit > clever).
+ * non-datacenter hosts), `[standard|premium]` (tier), and a bare model id
+ * (org-or6b.8 — any other positional is the vast/models.json model id, e.g.
+ * `llama8`). Everything else is an error (explicit > clever).
  */
-export function parseGpuOnArgs(args: string): { maxPrice?: number; homeOk: boolean; tier?: "standard" | "premium"; error?: string } {
-	const out: { maxPrice?: number; homeOk: boolean; tier?: "standard" | "premium"; error?: string } = { homeOk: false };
+export function parseGpuOnArgs(args: string): { maxPrice?: number; homeOk: boolean; tier?: "standard" | "premium"; model?: string; error?: string } {
+	const out: { maxPrice?: number; homeOk: boolean; tier?: "standard" | "premium"; model?: string; error?: string } = { homeOk: false };
 	const tokens = args.trim().split(/\s+/).filter(Boolean);
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i];
@@ -330,8 +335,18 @@ export function parseGpuOnArgs(args: string): { maxPrice?: number; homeOk: boole
 		} else if (t === "standard" || t === "premium") {
 			if (out.tier) return { homeOk: false, error: `tier given twice (${out.tier}, ${t}) — pass exactly one of: standard | premium` };
 			out.tier = t;
+		} else if (t === "--model") {
+			const m = tokens[++i];
+			if (!m) return { homeOk: false, error: `--model needs a model id, got (nothing)` };
+			if (out.model) return { homeOk: false, error: `model given twice (${out.model}, ${m}) — pass exactly one` };
+			out.model = m;
+		} else if (/^[a-z0-9][a-z0-9._-]*$/i.test(t) && t.length >= 2) {
+			// bare token = model id (org-or6b.8). Kept conservative so a typo
+			// like `--price` without a value still errors loudly.
+			if (out.model) return { homeOk: false, error: `model given twice (${out.model}, ${t}) — pass exactly one` };
+			out.model = t;
 		} else {
-			return { homeOk: false, error: `unknown parameter ${t} — supported: [standard|premium], --price <max $/hr>, --home-ok` };
+			return { homeOk: false, error: `unknown parameter ${t} — supported: [standard|premium], [model], --price <max $/hr>, --home-ok` };
 		}
 	}
 	return out;
