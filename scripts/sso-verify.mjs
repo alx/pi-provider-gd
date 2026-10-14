@@ -94,24 +94,40 @@ async function main() {
   const deadline = Date.now() + SECONDS * 1000;
   let key = "";
   let n = 0;
+  let teamId = opt("--team", "");
   while (Date.now() < deadline && !key) {
     n++;
     try {
-      const r = await fetch(`${BASE}/sso/cli/poll/${encodeURIComponent(start.login_id)}`, {
-        headers: { "x-litellm-cli-poll-secret": start.poll_secret },
-      });
+      const pollUrl =
+        `${BASE}/sso/cli/poll/${encodeURIComponent(start.login_id)}` +
+        (teamId ? `?team_id=${encodeURIComponent(teamId)}` : "");
+      const r = await fetch(pollUrl, { headers: { "x-litellm-cli-poll-secret": start.poll_secret } });
       const body = await r.text();
-      log(`poll#${n} HTTP ${r.status} ${body.slice(0, 120)}`);
+      log(`poll#${n} HTTP ${r.status} ${body.slice(0, 140)}`);
       if (r.status === 400) { bad("login expired/invalid (is the session still open? re-run the verifier)"); return 2; }
       if (r.ok) {
-        try { const j = JSON.parse(body); if (typeof j.key === "string" && j.key) key = j.key; } catch {}
+        let j = null;
+        try { j = JSON.parse(body); } catch {}
+        if (j && typeof j.key === "string" && j.key) { key = j.key; break; }
+        // LiteLLM team-selection step (multi-team users): first poll returns
+        // status "ready" + requires_team_selection, NO key. Pick a team
+        // (--team <id>, else the first) and re-poll with ?team_id.
+        if (j && j.status === "ready" && j.requires_team_selection && !teamId) {
+          const details = Array.isArray(j.team_details) ? j.team_details : [];
+          const ids = Array.isArray(j.teams) ? j.teams : [];
+          const options = details.length ? details : ids.map((t) => ({ team_id: t, team_alias: t }));
+          log(`team selection required - options: ${options.map((t) => `${t.team_alias || t.team_id}(${t.team_id})`).join(", ")}`);
+          teamId = teamId || (options[0] && options[0].team_id);
+          if (!teamId) { bad("several teams but none selectable"); return 3; }
+          ok(`selected team ${teamId} - re-polling with ?team_id`);
+        }
       }
     } catch (e) {
       log(`poll#${n} network error: ${e.message}`);
     }
     if (!key) await new Promise((r) => setTimeout(r, POLL_MS));
   }
-  if (!key) { bad(`no key within ${SECONDS}s - did you press Confirm/Continue on the browser page?`); return 3; }
+  if (!key) { bad(`no key within ${SECONDS}s - did you press Confirm/Continue (and pick a team)?`); return 3; }
   ok(`key issued: ${key.slice(0, 8)}... (${key.length} chars)`);
 
   step("4/4  validate the key against the proxy");

@@ -82,21 +82,6 @@ async function manualKeyLogin(interaction: AuthInteraction): Promise<ApiKeyCrede
 
 type CliSsoStart = Awaited<ReturnType<typeof startCliSso>>;
 
-/** Combine AbortSignals without relying on AbortSignal.any (lib targets). */
-function anySignal(...signals: (AbortSignal | undefined)[]): AbortSignal {
-	const ac = new AbortController();
-	const onAbort = () => ac.abort();
-	for (const s of signals) {
-		if (!s) continue;
-		if (s.aborted) {
-			ac.abort();
-			break;
-		}
-		s.addEventListener("abort", onAbort, { once: true });
-	}
-	return ac.signal;
-}
-
 /**
  * Login flow for `/login gd`. Lets the user choose between:
  *   - pasting an API key created in the proxy's web UI (works everywhere), and
@@ -163,47 +148,33 @@ async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Pro
 		message: `Waiting for the key to be issued (login expires in ${start.expiresInSeconds}s)…`,
 	});
 
-	// Hardening (org-gxn.4): the LiteLLM CLI-SSO handoff has been observed to
-	// stall (browser/Google auth succeeds, but the proxy does not return the key
-	// to /sso/cli/poll). Make the wait INTERRUPTIBLE: race the poll against a
-	// prompt the user can answer - pressing Enter cancels SSO and switches to
-	// pasting a key; typing/pasting a key in that prompt uses it directly. The
-	// losing side is aborted. /login gd can no longer hang with no way out.
-	const pollAbort = new AbortController();
-	const promptAbort = new AbortController();
-
-	const pollPromise = pollCliSso(BASE_URL, start, { signal: anySignal(interaction.signal, pollAbort.signal) })
-		.then((key) => ({ key }) as const)
-		.catch((e: unknown) => ({ err: e }) as const);
-
-	const promptPromise = interaction
-		.prompt({
-			type: "manual_code",
-			message:
-				"Waiting for the browser sign-in… press Enter to cancel and paste your " +
-				"API key instead, or paste the key here.",
-			signal: promptAbort.signal,
-		})
-		.then((value) => ({ value }) as const)
-		.catch(() => ({ value: "" }) as const);
-
-	const winner = await Promise.race([pollPromise, promptPromise]);
-	if ("key" in winner && winner.key) {
-		promptAbort.abort();
-		return { type: "api_key", key: winner.key };
-	}
-	pollAbort.abort();
-	promptAbort.abort();
-	if ("value" in winner && winner.value.trim().length > 0) {
-		return { type: "api_key", key: winner.value.trim() };
-	}
-	if ("err" in winner) {
+	// LiteLLM CLI-SSO has a TEAM-SELECTION step: when the user is in MORE THAN
+	// ONE team, the first poll returns status "ready" WITHOUT a key; the user
+	// must pick a team, then the poll re-runs with ?team_id and returns the key.
+	// (This was the real cause of the "terminal waits forever" bug.) Prompt for
+	// the team here; on any error/timeout fall back to pasting a key so
+	// /login gd never dead-ends.
+	try {
+		const key = await pollCliSso(BASE_URL, start, {
+			signal: interaction.signal,
+			selectTeam: async (teams) => {
+				if (teams.length === 0) return undefined;
+				const id = await interaction.prompt({
+					type: "select",
+					message: "Select the team for this gd key",
+					options: teams.map((t) => ({ id: t.id, label: t.label, description: t.description })),
+				});
+				return id || undefined;
+			},
+		});
+		return { type: "api_key", key };
+	} catch (e) {
 		interaction.notify({
 			type: "info",
-			message: `SSO did not return a key (${winner.err instanceof Error ? winner.err.message : String(winner.err)}) - paste a key instead.`,
+			message: `SSO did not return a key (${e instanceof Error ? e.message : String(e)}) - paste a key instead.`,
 		});
+		return manualKeyLogin(interaction);
 	}
-	return manualKeyLogin(interaction);
 }
 
 export interface GdProviderOptions {

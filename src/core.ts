@@ -287,20 +287,57 @@ export function verificationUrl(baseUrl: string, start: CliSsoStart): string {
 	return `${baseUrl}/sso/key/generate?${new URLSearchParams(params)}`;
 }
 
+/** A team the user can pick when the proxy requires a team choice. */
+export interface CliSsoTeam {
+	id: string;
+	label: string;
+	description?: string;
+}
+
 export interface PollCliSsoOptions {
 	timeoutMs?: number;
 	intervalMs?: number;
 	onTick?: (attempt: number) => void;
 	signal?: AbortSignal;
+	/**
+	 * LiteLLM CLI-SSO requires a team choice when the user is in MORE THAN ONE
+	 * team: the first poll returns {status:"ready", requires_team_selection:true,
+	 * teams/team_details} WITHOUT a key; the client must then poll again with
+	 * ?team_id=<id> to receive the key (the session is single-use). This callback
+	 * lets the UI ask the user; return the chosen team id.
+	 */
+	selectTeam?: (teams: CliSsoTeam[]) => Promise<string | undefined>;
+}
+
+/** Teams from a CLI poll "ready" payload (team_details preferred, else ids). */
+export function parseCliSsoTeams(details: unknown, ids: unknown): CliSsoTeam[] {
+	const out: CliSsoTeam[] = [];
+	if (Array.isArray(details)) {
+		for (const d of details) {
+			if (!d || typeof d !== "object") continue;
+			const t = d as Record<string, unknown>;
+			const id = typeof t.team_id === "string" ? t.team_id : undefined;
+			if (!id) continue;
+			const label = typeof t.team_alias === "string" && t.team_alias.length > 0 ? t.team_alias : id;
+			const models = Array.isArray(t.team_models)
+				? t.team_models.filter((m): m is string => typeof m === "string")
+				: [];
+			out.push({ id, label, description: models.length > 0 ? models.join(", ") : undefined });
+		}
+	}
+	if (out.length === 0 && Array.isArray(ids)) {
+		for (const i of ids) if (typeof i === "string") out.push({ id: i, label: i, description: undefined });
+	}
+	return out;
 }
 
 /**
  * Poll GET /sso/cli/poll/{login_id} until the proxy returns the issued key.
  *
- * The poll secret goes in the `x-litellm-cli-poll-secret` HEADER. The query
- * form (?secret=…) is rejected (HTTP 403 "Invalid CLI polling secret").
- * Transient network errors keep polling until the deadline; a 400 means the
- * login expired/invalid and is thrown immediately.
+ * The poll secret goes in the `x-litellm-cli-poll-secret` HEADER. Handles the
+ * LiteLLM team-selection step (see PollCliSsoOptions.selectTeam). Transient
+ * network errors keep polling until the deadline; expiry/secret errors are
+ * thrown immediately.
  */
 export async function pollCliSso(
 	baseUrl: string,
@@ -311,28 +348,47 @@ export async function pollCliSso(
 	const intervalMs = options.intervalMs ?? DEFAULT_SSO_POLL_INTERVAL_MS;
 	const deadline = Date.now() + timeoutMs;
 	let attempt = 0;
+	let teamId: string | undefined;
 	while (Date.now() < deadline) {
 		if (options.signal?.aborted) throw new Error("SSO login cancelled");
 		attempt += 1;
 		options.onTick?.(attempt);
+		const pollUrl =
+			`${baseUrl}/sso/cli/poll/${encodeURIComponent(start.loginId)}` +
+			(teamId ? `?team_id=${encodeURIComponent(teamId)}` : "");
+		let data: { status?: unknown; key?: unknown; requires_team_selection?: unknown; teams?: unknown; team_details?: unknown };
 		try {
 			const controller = new AbortController();
 			const timer = setTimeout(() => controller.abort(), 8000);
-			const res = await fetch(`${baseUrl}/sso/cli/poll/${encodeURIComponent(start.loginId)}`, {
+			const res = await fetch(pollUrl, {
 				headers: { "x-litellm-cli-poll-secret": start.pollSecret },
 				signal: controller.signal,
 			});
 			clearTimeout(timer);
 			if (res.status === 400) throw new Error("SSO login expired or is invalid; re-run the flow");
+			if (res.status === 403) throw new Error("SSO polling secret rejected; re-run the flow");
 			if (!res.ok) throw new Error(`SSO polling failed (HTTP ${res.status})`);
-			const data = (await res.json()) as { status?: unknown; key?: unknown };
-			if (typeof data.key === "string" && data.key.length > 0) return data.key;
-			if (data.status !== undefined && data.status !== "pending") {
-				throw new Error(`SSO polling returned an unexpected status: ${String(data.status)}`);
-			}
+			data = (await res.json()) as typeof data;
 		} catch (e) {
-			if (e instanceof Error && /expired or is invalid/.test(e.message)) throw e;
-			// transient network error: keep polling until the deadline
+			if (e instanceof Error && /expired or is invalid|secret rejected/.test(e.message)) throw e;
+			// transient network/parse error: keep polling until the deadline
+			await new Promise((resolve) => setTimeout(resolve, intervalMs));
+			continue;
+		}
+		if (typeof data.key === "string" && data.key.length > 0) return data.key;
+		if (data.status === "ready" && data.requires_team_selection === true && !teamId) {
+			const teams = parseCliSsoTeams(data.team_details, data.teams);
+			const chosen = options.selectTeam ? await options.selectTeam(teams) : undefined;
+			if (!chosen) {
+				throw new Error(
+					"This account belongs to several teams; a team must be selected to finish the CLI login, but none was chosen.",
+				);
+			}
+			teamId = chosen;
+			continue; // re-poll immediately WITH team_id -> the proxy returns the key
+		}
+		if (data.status !== undefined && data.status !== "pending") {
+			throw new Error(`SSO polling returned an unexpected status: ${String(data.status)}`);
 		}
 		await new Promise((resolve) => setTimeout(resolve, intervalMs));
 	}
