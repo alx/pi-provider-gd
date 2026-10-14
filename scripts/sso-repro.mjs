@@ -36,13 +36,15 @@ try {
 
   if (openBrowser) {
     try {
-      const cmd =
-        process.platform === "darwin"
-          ? ["open", url]
-          : process.platform === "win32"
-            ? ["cmd", "/c", "start", "", url]
+      // Windows: rundll32 passes the URL as ONE argv, so '&' in the query is
+      // not split by cmd (cmd /c start "" <url> drops key/user_code after '&').
+      const [file, ...a] =
+        process.platform === "win32"
+          ? ["rundll32", "url.dll,FileProtocolHandler", url]
+          : process.platform === "darwin"
+            ? ["open", url]
             : ["xdg-open", url];
-      spawn(cmd[0], cmd.slice(1), { stdio: "ignore", detached: true }).unref();
+      spawn(file, a, { stdio: "ignore", detached: true }).unref();
     } catch { /* no opener - user opens the printed URL */ }
   }
 
