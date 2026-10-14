@@ -82,6 +82,21 @@ async function manualKeyLogin(interaction: AuthInteraction): Promise<ApiKeyCrede
 
 type CliSsoStart = Awaited<ReturnType<typeof startCliSso>>;
 
+/** Combine AbortSignals without relying on AbortSignal.any (lib targets). */
+function anySignal(...signals: (AbortSignal | undefined)[]): AbortSignal {
+	const ac = new AbortController();
+	const onAbort = () => ac.abort();
+	for (const s of signals) {
+		if (!s) continue;
+		if (s.aborted) {
+			ac.abort();
+			break;
+		}
+		s.addEventListener("abort", onAbort, { once: true });
+	}
+	return ac.signal;
+}
+
 /**
  * Login flow for `/login gd`. Lets the user choose between:
  *   - pasting an API key created in the proxy's web UI (works everywhere), and
@@ -149,37 +164,46 @@ async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Pro
 	});
 
 	// Hardening (org-gxn.4): the LiteLLM CLI-SSO handoff has been observed to
-	// stall - browser/Google auth succeeds but the proxy never returns the key
-	// to /sso/cli/poll, so the terminal waited forever with no way forward.
-	// Warn periodically, and on ANY stall/timeout/error fall back to pasting a
-	// key so /login gd can never hang.
-	const startedAt = Date.now();
-	let warned = false;
-	const ticker = setInterval(() => {
-		const s = Math.round((Date.now() - startedAt) / 1000);
-		if (s >= 60 && !warned) {
-			warned = true;
-			interaction.notify({
-				type: "info",
-				message:
-					`Still waiting for the key (${s}s). If the browser already reported success, ` +
-					`the SSO handoff is stuck - you can paste an API key from ` +
-					`https://api.girard-davila.net/api/llm/ui/ instead (Ctrl-C the wait to switch).`,
-			});
-		}
-	}, 10_000);
-	try {
-		const key = await pollCliSso(BASE_URL, start, { signal: interaction.signal });
-		clearInterval(ticker);
-		return { type: "api_key", key };
-	} catch (e) {
-		clearInterval(ticker);
+	// stall (browser/Google auth succeeds, but the proxy does not return the key
+	// to /sso/cli/poll). Make the wait INTERRUPTIBLE: race the poll against a
+	// prompt the user can answer - pressing Enter cancels SSO and switches to
+	// pasting a key; typing/pasting a key in that prompt uses it directly. The
+	// losing side is aborted. /login gd can no longer hang with no way out.
+	const pollAbort = new AbortController();
+	const promptAbort = new AbortController();
+
+	const pollPromise = pollCliSso(BASE_URL, start, { signal: anySignal(interaction.signal, pollAbort.signal) })
+		.then((key) => ({ key }) as const)
+		.catch((e: unknown) => ({ err: e }) as const);
+
+	const promptPromise = interaction
+		.prompt({
+			type: "manual_code",
+			message:
+				"Waiting for the browser sign-in… press Enter to cancel and paste your " +
+				"API key instead, or paste the key here.",
+			signal: promptAbort.signal,
+		})
+		.then((value) => ({ value }) as const)
+		.catch(() => ({ value: "" }) as const);
+
+	const winner = await Promise.race([pollPromise, promptPromise]);
+	if ("key" in winner && winner.key) {
+		promptAbort.abort();
+		return { type: "api_key", key: winner.key };
+	}
+	pollAbort.abort();
+	promptAbort.abort();
+	if ("value" in winner && winner.value.trim().length > 0) {
+		return { type: "api_key", key: winner.value.trim() };
+	}
+	if ("err" in winner) {
 		interaction.notify({
 			type: "info",
-			message: `SSO did not return a key (${e instanceof Error ? e.message : String(e)}) - falling back to pasting the key.`,
+			message: `SSO did not return a key (${winner.err instanceof Error ? winner.err.message : String(winner.err)}) - paste a key instead.`,
 		});
-		return manualKeyLogin(interaction);
 	}
+	return manualKeyLogin(interaction);
 }
 
 export interface GdProviderOptions {
