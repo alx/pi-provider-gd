@@ -10,7 +10,7 @@
  * After install:
  *   /login gd      — either paste an API key created at
  *                    https://api.girard-davila.net/api/llm/ui/ or sign in via
- *                    browser SSO (GitHub → issued key); the key is stored in
+ *                    browser SSO (Google → issued key); the key is stored in
  *                    ~/.pi/agent/auth.json under "gd". No hand-editing, no
  *                    separate pi-provider-litellm install.
  *

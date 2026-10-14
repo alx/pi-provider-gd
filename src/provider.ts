@@ -85,7 +85,7 @@ type CliSsoStart = Awaited<ReturnType<typeof startCliSso>>;
 /**
  * Login flow for `/login gd`. Lets the user choose between:
  *   - pasting an API key created in the proxy's web UI (works everywhere), and
- *   - the SSO browser flow (browser → GitHub → issued key).
+ *   - the SSO browser flow (browser → Google → issued key).
  * If the SSO endpoint cannot be reached, falls back to pasting the key.
  */
 export async function gdLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
@@ -100,7 +100,7 @@ export async function gdLogin(interaction: AuthInteraction): Promise<ApiKeyCrede
 			},
 			{
 				id: "sso",
-				label: "Sign in with GitHub (browser SSO)",
+				label: "Sign in with Google (browser SSO)",
 				description: "Opens the SSO page; the issued key is polled and stored",
 			},
 		],
@@ -130,7 +130,7 @@ async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Pro
 
 	interaction.notify({
 		type: "info",
-		message: `Sign in with GitHub to ${new URL(BASE_URL).hostname} in the browser.`,
+		message: `Sign in with Google to ${new URL(BASE_URL).hostname} in the browser.`,
 		links: [{ url, label: "Open login page" }],
 	});
 	if (start.userCode) {

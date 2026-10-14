@@ -16,7 +16,7 @@ export const SSO_ENTRY_URL = "https://api.girard-davila.net/auth/sso";
 
 export const DEFAULT_DISCOVER_TIMEOUT_MS = 8000;
 export const DEFAULT_SSO_START_TIMEOUT_MS = 8000;
-export const DEFAULT_SSO_POLL_TIMEOUT_MS = 300_000; // SSO login expires at 600s
+export const DEFAULT_SSO_POLL_TIMEOUT_MS = 590_000; // cover the full 600s server expiry (slow Google login + consent must not outlast the poll)
 export const DEFAULT_SSO_POLL_INTERVAL_MS = 3000;
 
 export type Json = Record<string, unknown>;
