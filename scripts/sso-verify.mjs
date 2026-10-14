@@ -44,14 +44,19 @@ const step = (m) => console.log(`\n[${ts()}] == ${m} ==`);
 function openBrowser(url) {
   if (!OPEN) return;
   try {
-    const cmd =
-      process.platform === "win32" ? ["cmd", "/c", "start", "", url]
-      : process.platform === "darwin" ? ["open", url]
-      : ["xdg-open", url];
-    spawn(cmd[0], cmd.slice(1), { stdio: "ignore", detached: true }).unref();
+    // Windows: use rundll32 (passes the URL as ONE argv, so '&' in the query is
+    // NOT split by cmd - `cmd /c start "" <url>` drops everything after '&',
+    // which silently lost key/user_code and caused 'Invalid CLI login session id').
+    const [file, ...a] =
+      process.platform === "win32"
+        ? ["rundll32", "url.dll,FileProtocolHandler", url]
+        : process.platform === "darwin"
+          ? ["open", url]
+          : ["xdg-open", url];
+    spawn(file, a, { stdio: "ignore", detached: true }).unref();
     ok("opened the verification URL in your browser");
   } catch (e) {
-    log(`could not auto-open (${e.message}) - open the URL above manually`);
+    log(`could not auto-open (${e.message}) - open the URL above manually (copy it exactly)`);
   }
 }
 
