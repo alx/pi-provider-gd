@@ -148,8 +148,38 @@ async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Pro
 		message: `Waiting for the key to be issued (login expires in ${start.expiresInSeconds}s)…`,
 	});
 
-	const key = await pollCliSso(BASE_URL, start, { signal: interaction.signal });
-	return { type: "api_key", key };
+	// Hardening (org-gxn.4): the LiteLLM CLI-SSO handoff has been observed to
+	// stall - browser/Google auth succeeds but the proxy never returns the key
+	// to /sso/cli/poll, so the terminal waited forever with no way forward.
+	// Warn periodically, and on ANY stall/timeout/error fall back to pasting a
+	// key so /login gd can never hang.
+	const startedAt = Date.now();
+	let warned = false;
+	const ticker = setInterval(() => {
+		const s = Math.round((Date.now() - startedAt) / 1000);
+		if (s >= 60 && !warned) {
+			warned = true;
+			interaction.notify({
+				type: "info",
+				message:
+					`Still waiting for the key (${s}s). If the browser already reported success, ` +
+					`the SSO handoff is stuck - you can paste an API key from ` +
+					`https://api.girard-davila.net/api/llm/ui/ instead (Ctrl-C the wait to switch).`,
+			});
+		}
+	}, 10_000);
+	try {
+		const key = await pollCliSso(BASE_URL, start, { signal: interaction.signal });
+		clearInterval(ticker);
+		return { type: "api_key", key };
+	} catch (e) {
+		clearInterval(ticker);
+		interaction.notify({
+			type: "info",
+			message: `SSO did not return a key (${e instanceof Error ? e.message : String(e)}) - falling back to pasting the key.`,
+		});
+		return manualKeyLogin(interaction);
+	}
 }
 
 export interface GdProviderOptions {

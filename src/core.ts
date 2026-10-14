@@ -278,10 +278,13 @@ export async function startCliSso(
  * (The user_code is entered on the SSO page, not passed in the URL.)
  */
 export function verificationUrl(baseUrl: string, start: CliSsoStart): string {
-	return (
-		start.verificationUri ??
-		`${baseUrl}/sso/key/generate?${new URLSearchParams({ source: "litellm-cli", key: start.loginId })}`
-	);
+	if (start.verificationUri) return start.verificationUri;
+	// Include the user_code so the proxy can pre-fill the CLI confirmation page
+	// (honored when general_settings.allow_cli_sso_verification_uri_complete is
+	// on). Harmless when the proxy ignores it.
+	const params: Record<string, string> = { source: "litellm-cli", key: start.loginId };
+	if (start.userCode) params.user_code = start.userCode;
+	return `${baseUrl}/sso/key/generate?${new URLSearchParams(params)}`;
 }
 
 export interface PollCliSsoOptions {
