@@ -6,7 +6,8 @@
   "license": "MIT",
   "pi": {
     "extensions": [
-      "./extensions/index.ts"
+      "./extensions/index.ts",
+      "./node_modules/pi-powerline-footer/index.ts"
     ],
     "prompts": [
       "./prompts/*.md"

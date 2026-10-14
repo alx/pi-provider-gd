@@ -33,7 +33,9 @@ The proxy's dedicated GPU is primary; a rented VAST.ai 3090 is the overflow ("sl
 - **`/gd-gpu-off [instance_id]`** — destroys the instance (stops billing) and blocks the litellm VAST row (down first). No id = the current instance from state/label.
 - **`/gd-gpu`** — status: ledger money, VAST account (balance + credit), running instances with burn rate, local state, and what the footer is showing.
 
-**Powerline footer segment** (via the bundled `pi-powerline-footer` dependency) — run **`/gd-footer on`** once; the bar then shows, e.g.:
+**Powerline footer segment** (via the bundled `pi-powerline-footer` dependency, referenced in `package.json` `pi.extensions` as `./node_modules/pi-powerline-footer/index.ts`) — run **`/gd-footer on`** once; the bar then shows, e.g.:
+
+> Note: after upgrading pi-provider-gd, run `pi update --extensions` (or `pi remove` + `pi install git:github.com/alx/pi-provider-gd`) so the `pi-powerline-footer` dependency is installed into `node_modules`, then `/reload`. Without the dependency's extension loaded, `/gd-footer` writes the `customItems` entry but nothing renders.
 
 ```
 gd 8.22€ ● 0.23€/h
