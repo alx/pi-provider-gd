@@ -98,6 +98,12 @@ export interface GdStatusInput {
 // ---------------------------------------------------------------------------
 
 export const BURN_TIME_HOURS = 3;
+/**
+ * Token-credit low threshold (org-wfx.4): when the gd customer key has a
+ * budget and (budget - spend) drops below this many EUR (or goes negative),
+ * the footer shows a red credit alert and /gd-gpu says how to top up.
+ */
+export const LOW_CREDIT_EUR = 0.02;
 export const ENV_GD_DAY_HOURS = "GD_DAY_HOURS";
 export const DEFAULT_DAY_HOURS = 8;
 
@@ -116,8 +122,8 @@ export function parseUtcZ(s: string | undefined): number | undefined {
 }
 
 export interface BurnAlert {
-	kind: "time" | "runway";
-	/** time: hours rented; runway: days of work remaining (< 1). */
+	kind: "time" | "runway" | "credit";
+	/** time: hours rented; runway: days of work remaining (< 1); credit: EUR left (budget - spend). */
 	value: number;
 	detail: string;
 }
@@ -153,6 +159,19 @@ export function computeBurnAlerts(input: GdStatusInput, nowMs: number, dayH: num
 			});
 		}
 	}
+	// Token credit (org-wfx.4): only meaningful when a budget is set; fires
+	// on remaining < LOW_CREDIT_EUR, which includes spend >= budget.
+	const m = input.money;
+	if (m && m.budget !== null) {
+		const remaining = m.budget - m.spend;
+		if (remaining < LOW_CREDIT_EUR) {
+			alerts.push({
+				kind: "credit",
+				value: remaining,
+				detail: `token credit ${euro(Math.max(0, remaining))} left - /gd-pay to top up (or contact alx@girard-davila.net)`,
+			});
+		}
+	}
 	return alerts;
 }
 
@@ -174,6 +193,9 @@ export interface GdFormatOptions {
  *  - burn: summed dph, only when at least one GPU is running; RED when a burn
  *    alert (org-or6b.19) is active, followed by the alert cluster:
  *    red `⏱x.xh` (>= 3h rented) and/or red `⚠x.xh` (VAST runway < 1 day of work).
+ *  - token credit (org-wfx.4): red `⚠x.xx€` whenever a budget is set and
+ *    (budget - spend) < LOW_CREDIT_EUR — rendered even with no GPUs running
+ *    (hosted models burn token credit without any VAST instance).
  *  - apiError: red `!` (stale data, if any, still shown).
  */
 
@@ -215,12 +237,16 @@ export function formatGdStatus(input: GdStatusInput, opts: GdFormatOptions = {})
 		const burn = gpus.reduce((s, g) => s + (Number.isFinite(g.dph) ? g.dph : 0), 0);
 		parts.push(alerts.length > 0 ? ANS.red(`${euro(burn)}/h`) : `${euro(burn)}/h`);
 		for (const a of alerts) {
+			if (a.kind === "credit") continue; // rendered below, outside the GPU block
 			parts.push(
 				a.kind === "time"
 					? ANS.red(`⏱${a.value.toFixed(1)}h`)
 					: ANS.red(`⚠${Math.max(0, a.value * dayH).toFixed(1)}h`),
 			);
 		}
+	}
+	for (const a of alerts) {
+		if (a.kind === "credit") parts.push(ANS.red(`⚠${euro(Math.max(0, a.value))}`));
 	}
 	if (input.apiError) parts.push(ANS.red("!"));
 	return parts.join(" ");

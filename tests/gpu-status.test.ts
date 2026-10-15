@@ -170,6 +170,41 @@ test("formatGdStatus: alerts → red burn + ⏱/⚠ cluster", () => {
 	assert.ok(!clean.includes("\x1b[31m"), clean);
 });
 
+test("burn alerts: CREDIT fires when token budget low or exhausted (org-wfx.4)", () => {
+	// spend >= budget → remaining <= 0 → alert, /gd-pay hint
+	const out = computeBurnAlerts({ money: { budget: 1.11, spend: 1.11 } }, NOW, 8);
+	assert.equal(out.length, 1, JSON.stringify(out));
+	assert.equal(out[0].kind, "credit");
+	assert.ok(Math.abs(out[0].value) < 1e-9);
+	assert.ok(out[0].detail.includes("/gd-pay"), out[0].detail);
+	// just under the 0.02€ threshold: 1.00 - 0.99 = 0.01 → alert
+	const low = computeBurnAlerts({ money: { budget: 1, spend: 0.99 } }, NOW, 8);
+	assert.equal(low.length, 1, JSON.stringify(low));
+	assert.equal(low[0].kind, "credit");
+	// comfortably above → none
+	assert.deepEqual(computeBurnAlerts({ money: { budget: 1, spend: 0.5 } }, NOW, 8), []);
+	// no budget set → credit concept doesn't apply
+	assert.deepEqual(computeBurnAlerts({ money: { budget: null, spend: 9 } }, NOW, 8), []);
+	// no money data → none
+	assert.deepEqual(computeBurnAlerts({}, NOW, 8), []);
+});
+
+test("formatGdStatus: credit alert renders red ⚠x.xx€ even with no GPUs (org-wfx.4)", () => {
+	// 1.11 - 1.10 = 0.01 < 0.02 → money part red 0.01€ + credit marker
+	const out = formatGdStatus({ money: { budget: 1.11, spend: 1.1 } }, { nowMs: NOW, dayHours: 8 });
+	assert.ok(out.includes("⚠0.01€"), out);
+	assert.ok(out.includes("\x1b[31m"), "expected red");
+	// coexists with the GPU burn cluster
+	const withGpu = formatGdStatus(
+		{ money: { budget: 0.5, spend: 0.5 }, gpus: [{ dph: 0.68, state: "ready" }] },
+		{ nowMs: NOW, dayHours: 8 },
+	);
+	assert.ok(withGpu.includes("⚠0.00€"), withGpu);
+	// healthy budget → no credit marker
+	const ok = formatGdStatus({ money: { budget: 10, spend: 1 } }, { nowMs: NOW, dayHours: 8 });
+	assert.ok(!ok.includes("⚠"), ok);
+});
+
 test("dayHours(): default 8, env override, junk falls back", () => {
 	const saved = process.env.GD_DAY_HOURS;
 	try {
