@@ -446,7 +446,10 @@ export default function gdExtension(pi: ExtensionAPI) {
 					return;
 				}
 				try {
-					const r = await billingPost<{ checkout_url?: string }>("/checkout/tokens", { user_email: email, pack_usd: pack });
+					// gd_key: shared-account architecture (org-gxn.18.4) - all customer
+					// keys live under one LiteLLM user, so the webhook must credit the
+					// payer's actual gd key, not a per-email LiteLLM user.
+					const r = await billingPost<{ checkout_url?: string }>("/checkout/tokens", { user_email: email, pack_usd: pack, gd_key: gdKey || undefined });
 					if (!r.ok || !r.data?.checkout_url) {
 						const body = JSON.stringify(r.data).slice(0, 240);
 						pi.sendMessage({ customType: "gd-pay", content: `gd-pay tokens: checkout failed (HTTP ${r.status}) ${body}`, display: true });
