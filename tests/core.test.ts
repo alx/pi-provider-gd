@@ -318,9 +318,9 @@ const SSO_RESPONSE: Record<string, unknown> = {
 	expires_in: 600,
 };
 
-test("startCliSso: parses a valid /sso/cli/start response", async () => {
+test("startCliSso: parses a valid /api/cli/start response", async () => {
 	const { calls } = mockFetch(async (url, init) => {
-		assert.equal(url, `${BASE_URL}/sso/cli/start`);
+		assert.equal(url, `${BASE_URL}/api/cli/start`);
 		assert.equal(init?.method, "POST");
 		return new Response(JSON.stringify(SSO_RESPONSE), { status: 200 });
 	});
@@ -335,9 +335,14 @@ test("startCliSso: parses a valid /sso/cli/start response", async () => {
 
 test("startCliSso: keeps verification_uri_complete when provided", async () => {
 	mockFetch(async () =>
-		new Response(JSON.stringify({ ...SSO_RESPONSE, verification_uri_complete: "https://proxy/sso/key/generate?x=1" }), { status: 200 }));
+		new Response(JSON.stringify({ ...SSO_RESPONSE, verification_uri_complete: "https://provider.girard-davila.net/verify?login_id=cli-abc123" }), { status: 200 }));
 	const start = await startCliSso(BASE_URL);
-	assert.equal(start.verificationUri, "https://proxy/sso/key/generate?x=1");
+	assert.equal(start.verificationUri, "https://provider.girard-davila.net/verify?login_id=cli-abc123");
+});
+
+test("startCliSso: 429 (rate limit) surfaces a wait-an-hour message", async () => {
+	mockFetch(async () => new Response("slow down", { status: 429 }));
+	await assert.rejects(() => startCliSso(BASE_URL), /wait an hour/);
 });
 
 test("startCliSso: throws on HTTP error", async () => {
@@ -366,11 +371,11 @@ test("verificationUrl: prefers the proxy's verification_uri_complete", () => {
 	assert.equal(verificationUrl(BASE_URL, start), "https://v.example/u");
 });
 
-test("verificationUrl: falls back to /sso/key/generate?source=litellm-cli&key=<login_id>", () => {
-	const start: CliSsoStart = { loginId: "cli-x", pollSecret: "s", userCode: "", expiresInSeconds: 600 };
+test("verificationUrl: falls back to /verify?login_id=<id>&user_code=<code>", () => {
+	const start: CliSsoStart = { loginId: "cli-x", pollSecret: "s", userCode: "ABCD-EFGH", expiresInSeconds: 600 };
 	assert.equal(
 		verificationUrl(BASE_URL, start),
-		`${BASE_URL}/sso/key/generate?${new URLSearchParams({ source: "litellm-cli", key: "cli-x" })}`,
+		`${BASE_URL}/verify?${new URLSearchParams({ login_id: "cli-x", user_code: "ABCD-EFGH" })}`,
 	);
 });
 
@@ -380,24 +385,24 @@ test("verificationUrl: falls back to /sso/key/generate?source=litellm-cli&key=<l
 
 const START: CliSsoStart = { loginId: "cli-abc123", pollSecret: "secret-poll", userCode: "ABCD-EFGH", expiresInSeconds: 600 };
 
-test("pollCliSso: polls until ready and returns the key (secret in HEADER, not query)", async () => {
+test("pollCliSso: polls until success and returns the key (secret in HEADER, not query)", async () => {
 	const { calls } = mockFetch(async (url, init) => {
-		assert.equal(url, `${BASE_URL}/sso/cli/poll/cli-abc123`);
+		assert.equal(url, `${BASE_URL}/api/cli/poll/cli-abc123`);
 		const headers = init?.headers as Record<string, string>;
-		assert.equal(headers["x-litellm-cli-poll-secret"], "secret-poll");
+		assert.equal(headers["poll-secret"], "secret-poll");
 		if (calls.length < 2) return new Response(JSON.stringify({ status: "pending" }), { status: 200 });
-		return new Response(JSON.stringify({ status: "ready", key: "sk-issued", user_id: "alx" }), { status: 200 });
+		return new Response(JSON.stringify({ status: "success", key: "sk-issued", user_id: "customer-gateway" }), { status: 200 });
 	});
 	const key = await pollCliSso(BASE_URL, START, { timeoutMs: 5000, intervalMs: 10 });
 	assert.equal(key, "sk-issued");
 	assert.equal(calls.length, 2);
 });
 
-test("pollCliSso: 400 (expired/invalid login) fails fast", async () => {
-	mockFetch(async () => new Response("bad request", { status: 400 }));
+test("pollCliSso: 404 (expired session) fails fast", async () => {
+	mockFetch(async () => new Response("not found", { status: 404 }));
 	await assert.rejects(
 		() => pollCliSso(BASE_URL, START, { timeoutMs: 5000, intervalMs: 10 }),
-		/expired or is invalid/,
+		/expired/,
 	);
 });
 
@@ -406,7 +411,7 @@ test("pollCliSso: 500 is transient — keeps polling until success", async () =>
 	mockFetch(async () => {
 		seen += 1;
 		if (seen === 1) return new Response("boom", { status: 500 });
-		return new Response(JSON.stringify({ status: "ready", key: "sk-after-500" }), { status: 200 });
+		return new Response(JSON.stringify({ status: "success", key: "sk-after-500" }), { status: 200 });
 	});
 	const key = await pollCliSso(BASE_URL, START, { timeoutMs: 5000, intervalMs: 10 });
 	assert.equal(key, "sk-after-500");
@@ -440,7 +445,7 @@ test("pollCliSso: onTick reports each attempt", async () => {
 		seen += 1;
 		return seen < 2
 			? new Response(JSON.stringify({ status: "pending" }), { status: 200 })
-			: new Response(JSON.stringify({ status: "ready", key: "sk-k" }), { status: 200 });
+			: new Response(JSON.stringify({ status: "success", key: "sk-k" }), { status: 200 });
 	});
 	const attempts: number[] = [];
 	await pollCliSso(BASE_URL, START, { timeoutMs: 5000, intervalMs: 5, onTick: (n) => attempts.push(n) });

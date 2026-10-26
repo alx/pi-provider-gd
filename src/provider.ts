@@ -22,6 +22,7 @@ import { createProvider, openAICompletionsApi } from "@earendil-works/pi-ai/comp
 import {
 	BASE_URL,
 	PROVIDER_ID,
+	PROVIDER_URL,
 	fetchModelIdsChecked,
 	fetchModelLimits,
 	pollCliSso,
@@ -91,17 +92,17 @@ type CliSsoStart = Awaited<ReturnType<typeof startCliSso>>;
 export async function gdLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
 	const choice = await interaction.prompt({
 		type: "select",
-		message: "How would you like to sign in to Girard (api.girard-davila.net)?",
+		message: "How would you like to sign in to Girard (provider.girard-davila.net)?",
 		options: [
 			{
 				id: "manual",
 				label: "Paste API key",
-				description: "Use a key created at https://api.girard-davila.net/api/llm/ui/",
+				description: "Use the key from your dashboard at https://provider.girard-davila.net/",
 			},
 			{
 				id: "sso",
 				label: "Sign in with Google (browser SSO)",
-				description: "Opens the SSO page; the issued key is polled and stored",
+				description: "Opens the provider login; the issued key is polled and stored",
 			},
 		],
 	});
@@ -110,7 +111,7 @@ export async function gdLogin(interaction: AuthInteraction): Promise<ApiKeyCrede
 
 	let start: CliSsoStart;
 	try {
-		start = await startCliSso(BASE_URL);
+		start = await startCliSso(PROVIDER_URL);
 	} catch (e) {
 		interaction.notify({
 			type: "info",
@@ -126,11 +127,11 @@ export async function gdLogin(interaction: AuthInteraction): Promise<ApiKeyCrede
  * Returns the credential to store; pi persists it for the provider id.
  */
 async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Promise<ApiKeyCredential> {
-	const url = verificationUrl(BASE_URL, start);
+	const url = verificationUrl(PROVIDER_URL, start);
 
 	interaction.notify({
 		type: "info",
-		message: `Sign in with Google to ${new URL(BASE_URL).hostname} in the browser.`,
+		message: `Sign in with Google to provider.girard-davila.net in the browser.`,
 		links: [{ url, label: "Open login page" }],
 	});
 	if (start.userCode) {
@@ -148,25 +149,11 @@ async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Pro
 		message: `Waiting for the key to be issued (login expires in ${start.expiresInSeconds}s)…`,
 	});
 
-	// LiteLLM CLI-SSO has a TEAM-SELECTION step: when the user is in MORE THAN
-	// ONE team, the first poll returns status "ready" WITHOUT a key; the user
-	// must pick a team, then the poll re-runs with ?team_id and returns the key.
-	// (This was the real cause of the "terminal waits forever" bug.) Prompt for
-	// the team here; on any error/timeout fall back to pasting a key so
-	// /login gd never dead-ends.
+	// The customer gateway has no team step: pending until the browser half
+	// (Google SSO + /verify) completes, then success with the key. On any
+	// error/timeout fall back to pasting a key so /login gd never dead-ends.
 	try {
-		const key = await pollCliSso(BASE_URL, start, {
-			signal: interaction.signal,
-			selectTeam: async (teams) => {
-				if (teams.length === 0) return undefined;
-				const id = await interaction.prompt({
-					type: "select",
-					message: "Select the team for this gd key",
-					options: teams.map((t) => ({ id: t.id, label: t.label, description: t.description })),
-				});
-				return id || undefined;
-			},
-		});
+		const key = await pollCliSso(PROVIDER_URL, start, { signal: interaction.signal });
 		return { type: "api_key", key };
 	} catch (e) {
 		interaction.notify({
@@ -197,7 +184,7 @@ export function createGdProvider(options: GdProviderOptions = {}): Provider {
 		check: (input: { credential?: ApiKeyCredential }) => Promise<AuthCheck | undefined>;
 		resolve: (input: { credential?: ApiKeyCredential }) => Promise<AuthResult | undefined>;
 	} = {
-		name: "api.girard-davila.net API key",
+		name: "provider.girard-davila.net API key",
 		login: gdLogin,
 		check: async ({ credential }) => {
 			if (credential?.key) return { type: "api_key", source: "stored credential" };

@@ -8,11 +8,12 @@
  * requests to the endpoint and discovers models from /v1/models.
  *
  * After install:
- *   /login gd      — either paste an API key created at
- *                    https://api.girard-davila.net/api/llm/ui/ or sign in via
- *                    browser SSO (Google → issued key); the key is stored in
- *                    ~/.pi/agent/auth.json under "gd". No hand-editing, no
- *                    separate pi-provider-litellm install.
+ *   /login gd      — either paste the API key from your dashboard at
+ *                    https://provider.girard-davila.net/ or sign in via the
+ *                    browser device flow (Google SSO → gateway issues the
+ *                    key); the key is stored in ~/.pi/agent/auth.json under
+ *                    "gd". No hand-editing, no separate pi-provider-litellm
+ *                    install.
  *
  * Self-heal: a brand-new session that has no model selected yet is pointed at
  * the default gd model (GD_DEFAULT_MODEL env or DEFAULT_MODEL_ID, validated

@@ -1,104 +1,115 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCliSsoTeams, pollCliSso, type CliSsoStart } from "../src/core.ts";
-
-// ---- parseCliSsoTeams ----------------------------------------------------
-
-test("parseCliSsoTeams: builds from team_details (alias + models)", () => {
-	const teams = parseCliSsoTeams(
-		[
-			{ team_id: "t1", team_alias: "public-customer", team_models: ["deepseek-v4.1-flash"] },
-			{ team_id: "t2", team_alias: null, team_models: ["qwen3.8-primary"] },
-		],
-		["t1", "t2"],
-	);
-	assert.deepEqual(teams, [
-		{ id: "t1", label: "public-customer", description: "deepseek-v4.1-flash" },
-		{ id: "t2", label: "t2", description: "qwen3.8-primary" },
-	]);
-});
-
-test("parseCliSsoTeams: falls back to raw ids", () => {
-	assert.deepEqual(parseCliSsoTeams(undefined, ["a", "b"]), [
-		{ id: "a", label: "a", description: undefined },
-		{ id: "b", label: "b", description: undefined },
-	]);
-	assert.deepEqual(parseCliSsoTeams(undefined, undefined), []);
-});
-
-// ---- pollCliSso team-selection flow --------------------------------------
+import { pollCliSso, verificationUrl, type CliSsoStart } from "../src/core.ts";
 
 function start(): CliSsoStart {
-	return { loginId: "cli-test", pollSecret: "secret", userCode: "AAAA-BBBB", expiresInSeconds: 600 };
+	return {
+		loginId: "cli-test",
+		pollSecret: "secret",
+		userCode: "AAAA-BBBB",
+		verificationUri: "https://provider.girard-davila.net/verify?login_id=cli-test&user_code=AAAA-BBBB",
+		expiresInSeconds: 600,
+	};
 }
 
-test("pollCliSso: multi-team -> selectTeam -> re-poll with team_id -> key", async () => {
-	const realFetch = globalThis.fetch;
-	const urls: string[] = [];
-	let readyReturned = false;
-	globalThis.fetch = (async (input: RequestInfo | URL) => {
-		const url = String(input);
-		urls.push(url);
-		const json = (o: unknown) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json" } });
-		if (url.includes("team_id=t2")) {
-			return json({ status: "ready", key: "sk-issued", team_id: "t2" });
-		}
-		if (!readyReturned) {
-			readyReturned = true;
-			return json({ status: "pending" });
-		}
-		// first "ready" without a key: team selection required
-		return json({
-			status: "ready",
-			requires_team_selection: true,
-			teams: ["t1", "t2"],
-			team_details: [
-				{ team_id: "t1", team_alias: "public-customer", team_models: ["deepseek-v4.1-flash"] },
-				{ team_id: "t2", team_alias: "internal", team_models: ["qwen3.8-primary"] },
-			],
-		});
-	}) as typeof fetch;
+const json = (o: unknown) =>
+	new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
 
-	let pickedOptions: { id: string; label: string }[] = [];
+test("pollCliSso: pending -> success returns the issued key", async () => {
+	const realFetch = globalThis.fetch;
+	const seen: { url: string; secret?: string }[] = [];
+	let calls = 0;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = String(input);
+		seen.push({ url, secret: (init?.headers as Record<string, string>)?.["poll-secret"] });
+		calls += 1;
+		if (calls < 3) return json({ status: "pending", error: null, user_code: "AAAA-BBBB" });
+		return json({ status: "success", customer: "sub-1", key: "sk-issued" });
+	}) as typeof fetch;
 	try {
-		const key = await pollCliSso("https://x/api/llm", start(), {
+		const key = await pollCliSso("https://provider.girard-davila.net", start(), {
 			intervalMs: 1,
 			timeoutMs: 5000,
-			selectTeam: async (teams) => {
-				pickedOptions = teams.map((t) => ({ id: t.id, label: t.label }));
-				return "t2";
-			},
 		});
 		assert.equal(key, "sk-issued");
-		assert.deepEqual(pickedOptions, [
-			{ id: "t1", label: "public-customer" },
-			{ id: "t2", label: "internal" },
-		]);
-		assert.ok(urls.some((u) => u.includes("team_id=t2")), "must re-poll with the chosen team_id");
+		assert.equal(calls, 3, "two pendings then success");
+		for (const s of seen) {
+			assert.ok(s.url.endsWith("/api/cli/poll/cli-test"), "polls /api/cli/poll/{login_id}");
+			assert.equal(s.secret, "secret", "poll secret in the poll-secret header");
+		}
 	} finally {
 		globalThis.fetch = realFetch;
 	}
 });
 
-test("pollCliSso: single-team returns key directly (no selection)", async () => {
+test("pollCliSso: error status throws with the server message", async () => {
 	const realFetch = globalThis.fetch;
 	globalThis.fetch = (async () =>
-		new Response(JSON.stringify({ status: "ready", key: "sk-one" }), {
-			headers: { "content-type": "application/json" },
-		})) as typeof fetch;
-	let selectCalled = false;
+		json({ status: "error", error: "session expired" })) as typeof fetch;
 	try {
-		const key = await pollCliSso("https://x/api/llm", start(), {
-			intervalMs: 1,
-			timeoutMs: 5000,
-			selectTeam: async () => {
-				selectCalled = true;
-				return undefined;
-			},
-		});
-		assert.equal(key, "sk-one");
-		assert.equal(selectCalled, false);
+		await assert.rejects(
+			() => pollCliSso("https://provider.girard-davila.net", start(), { intervalMs: 1, timeoutMs: 5000 }),
+			/SSO login failed: session expired/,
+		);
 	} finally {
 		globalThis.fetch = realFetch;
 	}
+});
+
+test("pollCliSso: 404 -> expired, 403 -> secret rejected (thrown immediately)", async () => {
+	const realFetch = globalThis.fetch;
+	globalThis.fetch = (async () => new Response("no", { status: 404 })) as typeof fetch;
+	await assert.rejects(
+		() => pollCliSso("https://provider.girard-davila.net", start(), { intervalMs: 1, timeoutMs: 5000 }),
+		/expired/,
+	);
+	globalThis.fetch = (async () => new Response("no", { status: 403 })) as typeof fetch;
+	await assert.rejects(
+		() => pollCliSso("https://provider.girard-davila.net", start(), { intervalMs: 1, timeoutMs: 5000 }),
+		/secret rejected/,
+	);
+	globalThis.fetch = realFetch;
+});
+
+test("pollCliSso: transient network errors keep polling until success", async () => {
+	const realFetch = globalThis.fetch;
+	let calls = 0;
+	globalThis.fetch = (async () => {
+		calls += 1;
+		if (calls === 1) throw new TypeError("fetch failed");
+		return json({ status: "success", key: "sk-after-blip" });
+	}) as typeof fetch;
+	try {
+		const key = await pollCliSso("https://provider.girard-davila.net", start(), {
+			intervalMs: 1,
+			timeoutMs: 5000,
+		});
+		assert.equal(key, "sk-after-blip");
+	} finally {
+		globalThis.fetch = realFetch;
+	}
+});
+
+test("pollCliSso: aborted signal cancels the wait", async () => {
+	const realFetch = globalThis.fetch;
+	globalThis.fetch = (async () => json({ status: "pending" })) as typeof fetch;
+	const ac = new AbortController();
+	const p = pollCliSso("https://provider.girard-davila.net", start(), {
+		intervalMs: 1,
+		timeoutMs: 5000,
+		signal: ac.signal,
+	});
+	setTimeout(() => ac.abort(), 10);
+	await assert.rejects(p, /cancelled/);
+	globalThis.fetch = realFetch;
+});
+
+test("verificationUrl: prefers the gateway's complete URI, falls back to /verify", () => {
+	const s = start();
+	assert.equal(verificationUrl("https://provider.girard-davila.net", s), s.verificationUri);
+	const bare = verificationUrl("https://provider.girard-davila.net", { ...s, verificationUri: undefined });
+	assert.equal(
+		bare,
+		"https://provider.girard-davila.net/verify?login_id=cli-test&user_code=AAAA-BBBB",
+	);
 });

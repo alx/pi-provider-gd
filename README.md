@@ -1,6 +1,6 @@
 # pi-provider-gd
 
-A **native `gd` provider** for [api.girard-davila.net](https://api.girard-davila.net) for the [pi coding agent](https://github.com/badlogic/pi-mono). One install, one command, zero hand-editing.
+A **native `gd` provider** for [api.girard-davila.net](https://api.girard-davila.net) (customer login via [provider.girard-davila.net](https://provider.girard-davila.net)) for the [pi coding agent](https://github.com/badlogic/pi-mono). One install, one command, zero hand-editing.
 
 ```
 pi install git:github.com/alx/pi-provider-gd
@@ -12,9 +12,9 @@ pi install git:github.com/alx/pi-provider-gd
 
 - **Self-contained** — no `pi-provider-litellm`, no other installs. `pi-provider-gd` registers its own native pi provider (`createProvider` + OpenAI-compatible streaming from `@earendil-works/pi-ai`).
 - **Native `/login gd`** — pick how to sign in:
-  - **Paste API key** — paste a key created at [https://api.girard-davila.net/api/llm/ui/](https://api.girard-davila.net/api/llm/ui/).
-  - **Sign in with GitHub (browser SSO)** — a browser opens, you sign in with GitHub, the proxy issues a key.
-  Either way pi stores the key in `~/.pi/agent/auth.json` under `gd`. No manual key handling. If the SSO endpoint is unreachable (offline, firewall, …) the flow falls back to pasting the key instead of failing.
+  - **Paste API key** — paste the key from your dashboard at [https://provider.girard-davila.net/](https://provider.girard-davila.net/).
+  - **Sign in with Google (browser SSO)** — a browser opens on the customer gateway (provider.girard-davila.net), you sign in with Google, and the gateway issues your key.
+  Either way pi stores the key in `~/.pi/agent/auth.json` under `gd`. No manual key handling. If the gateway is unreachable (offline, firewall, …) the flow falls back to pasting the key instead of failing.
 - **`gd/<model-id>`** — models surface under the `gd` provider id in `/model` and `/login`, refreshed live from the proxy's `/v1/models`. No pi restart needed.
 - **Sensible default model** — a new session with no model selected automatically lands on the default gd model (first live model, or `GD_DEFAULT_MODEL` if you set it) once a credential exists. No "no model" dead-end after install + login.
 - **Honest failures** — if the proxy is unreachable or the key is rejected, `/model` refresh surfaces an error ("model discovery request failed … check network connectivity to the proxy") instead of silently showing zero models.
