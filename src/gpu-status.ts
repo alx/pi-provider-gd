@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { BASE_URL } from "./core.ts";
 import { fetchGdAccount, fetchRunningInstances, parseEnvFile, readGpuFailure, readGpuLaunching, readGpuState, roundCents, vastHome } from "./gpu.ts";
+import { gdFetch } from "./egress-proxy.ts";
 
 // ---------------------------------------------------------------------------
 // Ledger (api.girard-davila.net) — the money shown in the footer comes from
@@ -38,7 +39,7 @@ export function readGdKey(authPath: string = path.join(os.homedir(), ".pi", "age
 
 export async function fetchLedger(opsKey: string, gdKey: string, baseUrl: string = BASE_URL): Promise<LedgerInfo> {
 	const url = `${baseUrl}/key/info?key=${encodeURIComponent(gdKey)}`;
-	const res = await fetch(url, { headers: { Authorization: `Bearer ${opsKey}` } });
+	const res = await gdFetch(url, { headers: { Authorization: `Bearer ${opsKey}` } });
 	if (!res.ok) throw new Error(`ledger /key/info failed: HTTP ${res.status}`);
 	const data = (await res.json()) as { info?: { key_alias?: string; max_budget?: number | null; spend?: number } };
 	const info = data.info ?? {};

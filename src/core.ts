@@ -9,10 +9,17 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { gdFetch } from "./egress-proxy.ts";
 
 export const PROVIDER_ID = "gd";
-/** LiteLLM proxy — model calls, discovery, billing. */
-export const BASE_URL = "https://api.girard-davila.net/api/llm";
+/**
+ * LiteLLM proxy — model calls, discovery, billing.
+ * GD_BASE_URL override (org-vk8i.30): farm instances point this at the LAN
+ * LiteLLM (http://192.168.112.1:4000) because they have no direct egress and
+ * pi core's own fetch cannot be routed through a proxy from userland.
+ */
+export const BASE_URL =
+	process.env.GD_BASE_URL ?? "https://api.girard-davila.net/api/llm";
 /** Customer gateway — the CLI device flow (org-gxn.18.5) lives here, not on the proxy. */
 export const PROVIDER_URL = "https://provider.girard-davila.net";
 export const SSO_ENTRY_URL = PROVIDER_URL;
@@ -98,7 +105,7 @@ export async function fetchModelIdsChecked(
 		if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 		let res: Response;
 		try {
-			res = await fetch(baseUrl + "/v1/models", { headers, signal: controller.signal });
+			res = await gdFetch(baseUrl + "/v1/models", { headers, signal: controller.signal });
 		} catch (e) {
 			throw new Error(
 				`model discovery request failed for ${baseUrl}/v1/models (${describeFetchError(e)}); check network connectivity to the proxy — run /gd-doctor in pi for diagnosis and contact info`,
@@ -194,7 +201,7 @@ export async function fetchModelLimits(
 	try {
 		const headers: Record<string, string> = { Accept: "application/json" };
 		if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-		const res = await fetch(baseUrl + "/model/info", { headers, signal: controller.signal });
+		const res = await gdFetch(baseUrl + "/model/info", { headers, signal: controller.signal });
 		if (!res.ok) return {};
 		const body = (await res.json()) as {
 			data?: Array<{ model_name?: unknown; litellm_params?: Record<string, unknown> }>;
@@ -234,7 +241,7 @@ export async function startCliSso(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		const res = await fetch(baseUrl + "/api/cli/start", {
+		const res = await gdFetch(baseUrl + "/api/cli/start", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: "{}",
@@ -318,7 +325,7 @@ export async function pollCliSso(
 		try {
 			const controller = new AbortController();
 			const timer = setTimeout(() => controller.abort(), 8000);
-			const res = await fetch(`${baseUrl}/api/cli/poll/${encodeURIComponent(start.loginId)}`, {
+			const res = await gdFetch(`${baseUrl}/api/cli/poll/${encodeURIComponent(start.loginId)}`, {
 				headers: { "poll-secret": start.pollSecret },
 				signal: controller.signal,
 			});

@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { gdFetch } from "./egress-proxy.ts";
 
 export const VAST_API_BASE = "https://console.vast.ai/api/v0";
 export const DEFAULT_VAST_HOME = path.join(os.homedir(), "code", "api.girard-davila.net", "vast");
@@ -197,7 +198,7 @@ export async function fetchRunningInstances(apiKey: string, apiBase = VAST_API_B
 	q.set("limit", "25");
 	const host = apiBase.replace(/\/api\/v\d+$/, "");
 	const url = `${host}/api/v1/instances/?${q.toString()}`;
-	const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+	const res = await gdFetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
 	const data = (await res.json()) as { instances?: Array<Record<string, unknown>> };
 	if (!res.ok) throw new Error(`VAST /instances/ failed: HTTP ${res.status}`);
 	return (data.instances ?? []).flatMap((row) => {

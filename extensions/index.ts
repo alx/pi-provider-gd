@@ -42,8 +42,13 @@ import {
 import { deployGpu, fetchGdAccount, GPU_MODEL_ID, parseGpuOnArgs, readGpuState, teardownGpu, vastHome } from "../src/gpu.ts";
 import { FOOTER_DEFAULT_ENV, collectGdStatus, computeBurnAlerts, dayHours, formatGdStatus, readFooterKeys, readGdKey } from "../src/gpu-status.ts";
 import { spawn } from "node:child_process";
+import { applyEgressProxy, gdFetch } from "../src/egress-proxy.ts";
 
 const DEFAULT_MODEL_DISCOVER_TIMEOUT_MS = 4000;
+
+// Farm instances (org-vk8i.30) have no direct egress; route every fetch()
+// through the allowlist proxy when PI_EGRESS_PROXY is set. No-op otherwise.
+applyEgressProxy();
 
 // Customer-facing billing entry (org-cusm.9.10 / org-wfx.1): pay from Pi.
 // The LiteLLM proxy (BASE_URL=/api/llm) and the billing service
@@ -68,7 +73,7 @@ function openUrl(url: string): void {
 async function billingPost<T>(path: string, body: unknown): Promise<{ ok: boolean; status: number; data: T }> {
 	let res: Response;
 	try {
-		res = await fetch(`${BILLING_BASE}${path}`, {
+		res = await gdFetch(`${BILLING_BASE}${path}`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(body),
@@ -425,7 +430,7 @@ export default function gdExtension(pi: ExtensionAPI) {
 			let flowLocked = false;
 			if (gdKey) {
 				try {
-					const r = await fetch(`${BILLING_BASE}/account`, { headers: { "x-gd-key": gdKey } });
+					const r = await gdFetch(`${BILLING_BASE}/account`, { headers: { "x-gd-key": gdKey } });
 					if (r.ok) {
 						const a = (await r.json()) as { user?: string; flow_locked?: boolean };
 						user = a.user ?? "";
