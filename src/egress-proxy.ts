@@ -18,6 +18,8 @@ import {
 	fetch as undiciFetch,
 	getGlobalDispatcher,
 	setGlobalDispatcher,
+	type Request as UndiciRequest,
+	type Response as UndiciResponse,
 } from "undici";
 
 let proxied = false;
@@ -36,13 +38,26 @@ export function applyEgressProxy(): void {
 /**
  * fetch() that honors the egress proxy when configured. Drop-in for the
  * global fetch at all pi-provider-gd call sites.
+ *
+ * Type note: with lib dom + @types/node, the global Response/Request are
+ * Node's (undici-backed) declarations, which are not structurally identical
+ * to the undici package's own Response/Request. At runtime they ARE the same
+ * objects (Node's global fetch is undici's fetch), so the two casts below
+ * are type-level only.
  */
 export function gdFetch(
 	input: string | URL | Request,
 	init?: RequestInit,
 ): Promise<Response> {
 	if (proxied) {
-		return undiciFetch(input as string | URL | Request, init as any);
+		// undiciFetch's parameter type is its own Request; a node/dom Request
+		// is the same runtime object, so cast through the package type.
+		const uInput =
+			typeof input === "string" || input instanceof URL
+				? input
+				: (input as unknown as UndiciRequest);
+		const p = undiciFetch(uInput, init as any) as Promise<UndiciResponse>;
+		return p.then((r) => r as unknown as Response);
 	}
 	return fetch(input, init);
 }
