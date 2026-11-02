@@ -2,18 +2,16 @@
  * pi-provider-gd — self-contained native `gd` provider for api.girard-davila.net.
  *
  * Installing this package is the whole setup:
- *   pi install git:github.com/alx/pi-provider-gd
+ *   pi install npm:pi-provider-gd
  *
  * It registers a native pi provider `gd` that streams OpenAI-compatible
  * requests to the endpoint and discovers models from /v1/models.
  *
  * After install:
- *   /login gd      — either paste the API key from your dashboard at
- *                    https://provider.girard-davila.net/ or sign in via the
- *                    browser device flow (Google SSO → gateway issues the
- *                    key); the key is stored in ~/.pi/agent/auth.json under
- *                    "gd". No hand-editing, no separate pi-provider-litellm
- *                    install.
+ *   /login gd      — sign in at https://provider.girard-davila.net/auth/google
+ *                    (Google), then paste the API key from your dashboard;
+ *                    the key is stored in ~/.pi/agent/auth.json under "gd".
+ *                    No hand-editing, no separate pi-provider-litellm install.
  *
  * Self-heal: a brand-new session that has no model selected yet is pointed at
  * the default gd model (GD_DEFAULT_MODEL env or DEFAULT_MODEL_ID, validated

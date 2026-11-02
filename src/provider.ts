@@ -2,8 +2,9 @@
  * pi-provider-gd — native `gd` provider.
  *
  * Builds a self-contained pi Provider: OpenAI-compatible streaming against
- * api.girard-davila.net, dynamic model discovery from /v1/models, and SSO
- * browser login via the LiteLLM CLI-SSO endpoint. No pi-provider-litellm.
+ * api.girard-davila.net, dynamic model discovery from /v1/models, and API-key
+ * login (the key is issued on provider.girard-davila.net after Google sign-in
+ * at /auth/google). No pi-provider-litellm.
  *
  * Login is a pi auth flow (`auth.apiKey.login`), so the standard `/login gd`
  * selector drives it. pi persists the returned credential to the shared auth
@@ -22,12 +23,8 @@ import { createProvider, openAICompletionsApi } from "@earendil-works/pi-ai/comp
 import {
 	BASE_URL,
 	PROVIDER_ID,
-	PROVIDER_URL,
 	fetchModelIdsChecked,
 	fetchModelLimits,
-	pollCliSso,
-	startCliSso,
-	verificationUrl,
 	type ModelLimits,
 } from "./core.ts";
 
@@ -69,99 +66,29 @@ export function toModel(id: string, limits?: ModelLimits): Model<"openai-complet
 }
 
 /**
- * Prompt for an API key created in the proxy's web UI, pasted by the user.
+ * Prompt for the API key issued after Google sign-in, pasted by the user.
+ * The user signs in at https://provider.girard-davila.net/auth/google, then
+ * copies the key from their dashboard and pastes it here.
  */
 async function manualKeyLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
 	const key = (await interaction.prompt({
 		type: "secret",
-		message: "Paste the API key (created at /ui/ on api.girard-davila.net):",
+		message:
+			"1) Sign in at https://provider.girard-davila.net/auth/google (Google). " +
+			"2) Copy the API key from your dashboard and paste it here:",
 		placeholder: "sk-...",
 	})).trim();
 	if (key.length === 0) throw new Error("API key is empty; login cancelled");
 	return { type: "api_key", key };
 }
 
-type CliSsoStart = Awaited<ReturnType<typeof startCliSso>>;
-
 /**
- * Login flow for `/login gd`. Lets the user choose between:
- *   - pasting an API key created in the proxy's web UI (works everywhere), and
- *   - the SSO browser flow (browser → Google → issued key).
- * If the SSO endpoint cannot be reached, falls back to pasting the key.
+ * Login flow for `/login gd` — API key only. The user signs in with Google
+ * at https://provider.girard-davila.net/auth/google, then copies the issued
+ * key from the dashboard and pastes it. No browser SSO from /login gd.
  */
 export async function gdLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
-	const choice = await interaction.prompt({
-		type: "select",
-		message: "How would you like to sign in to Girard (provider.girard-davila.net)?",
-		options: [
-			{
-				id: "manual",
-				label: "Paste API key",
-				description: "Use the key from your dashboard at https://provider.girard-davila.net/",
-			},
-			{
-				id: "sso",
-				label: "Sign in with Google (browser SSO)",
-				description: "Opens the provider login; the issued key is polled and stored",
-			},
-		],
-	});
-
-	if (choice !== "sso") return manualKeyLogin(interaction);
-
-	let start: CliSsoStart;
-	try {
-		start = await startCliSso(PROVIDER_URL);
-	} catch (e) {
-		interaction.notify({
-			type: "info",
-			message: `Could not start SSO (${e instanceof Error ? e.message : String(e)}). Falling back to pasting the key.`,
-		});
-		return manualKeyLogin(interaction);
-	}
-	return runSsoFlow(interaction, start);
-}
-
-/**
- * SSO browser login, driven through pi's standard auth interaction callbacks.
- * Returns the credential to store; pi persists it for the provider id.
- */
-async function runSsoFlow(interaction: AuthInteraction, start: CliSsoStart): Promise<ApiKeyCredential> {
-	const url = verificationUrl(PROVIDER_URL, start);
-
-	interaction.notify({
-		type: "info",
-		message: `Sign in with Google to provider.girard-davila.net in the browser.`,
-		links: [{ url, label: "Open login page" }],
-	});
-	if (start.userCode) {
-		interaction.notify({
-			type: "device_code",
-			userCode: start.userCode,
-			verificationUri: url,
-			expiresInSeconds: start.expiresInSeconds,
-		});
-	} else {
-		interaction.notify({ type: "auth_url", url });
-	}
-	interaction.notify({
-		type: "progress",
-		message: `Waiting for the key to be issued (login expires in ${start.expiresInSeconds}s)…`,
-	});
-
-	// The customer gateway has no team step: pending until the browser half
-	// (Google SSO + /verify) completes, then success with the key. On any
-	// error/timeout fall back to pasting a key so /login gd never dead-ends.
-	try {
-		const key = await pollCliSso(PROVIDER_URL, start, { signal: interaction.signal });
-		return { type: "api_key", key };
-	} catch (e) {
-		interaction.notify({
-			type: "info",
-			message: `SSO did not return a key (${e instanceof Error ? e.message : String(e)}) - paste a key instead.`,
-		});
-		return manualKeyLogin(interaction);
-	}
+	return manualKeyLogin(interaction);
 }
 
 export interface GdProviderOptions {
