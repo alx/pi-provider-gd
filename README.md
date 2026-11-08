@@ -1,6 +1,6 @@
 # pi-provider-gd
 
-A **native `gd` provider** for [api.girard-davila.net](https://api.girard-davila.net) (customer login via [provider.girard-davila.net](https://provider.girard-davila.net)) for the [pi coding agent](https://github.com/badlogic/pi-mono). One install, one command, zero hand-editing.
+A **native `gd` provider** for [provider.girard-davila.net](https://provider.girard-davila.net) — the customer portal where you sign in, see your spend and top up — for the [pi coding agent](https://github.com/badlogic/pi-mono). One install, one command, zero hand-editing. Model calls are served by the gd API at `api.girard-davila.net` (see [Endpoint](#endpoint)).
 
 ```
 pi install npm:pi-provider-gd
@@ -16,7 +16,7 @@ pi install npm:pi-provider-gd
 - **Sensible default model** — a new session with no model selected automatically lands on the default gd model (first live model, or `GD_DEFAULT_MODEL` if you set it) once a credential exists. No "no model" dead-end after install + login.
 - **Honest failures** — if the proxy is unreachable or the key is rejected, `/model` refresh surfaces an error ("model discovery request failed … check network connectivity to the proxy") instead of silently showing zero models.
 - **`/gd-doctor`** — in-pi diagnostics: shows the exact cause when a catalog refresh fails (credential state, network error, HTTP status, model list), since pi's `/model` screen hides the underlying error.
-- **OpenAI-compatible streaming** — requests go to `https://api.girard-davila.net/api/llm/v1/chat/completions` with tool-call, thinking, and streaming support via pi-ai's `openai-completions` transport.
+- **OpenAI-compatible streaming** — requests go to the gd API at `https://api.girard-davila.net/api/llm/v1/chat/completions` with tool-call, thinking, and streaming support via pi-ai's `openai-completions` transport.
 - **Fallbacks** — `GD_API_KEY` env var is honored as an ambient credential; re-running `/login gd` resumes.
 - **GPU overflow control** — `/gd-gpu-on [params]` / `/gd-gpu-off [instance_id]` / `/gd-gpu` status, `gd_deploy_gpu`/`gd_gpu_model` tools, and a live `[gd <ledger €> ●● <burn €/h>]` powerline footer (`/gd-footer on`). See below.
 
@@ -40,7 +40,7 @@ gd -0.00€ ●● 0.68€/h
 gd 8.22€ !
 ```
 
-- **money** = the api.girard-davila.net **ledger** of your gd customer key (LiteLLM `/key/info`): `budget − spend` when a budget is set (red under 10%), or `−spend` in grey when the key has no budget. Never raw VAST funds.
+- **money** = the [provider.girard-davila.net](https://provider.girard-davila.net) **ledger** of your gd customer key, the same number your dashboard shows: `budget − spend` when a budget is set (red under 10%), or `−spend` in grey when the key has no budget. Never raw VAST funds. (Technically it is read from the proxy's key record — `budget`, `spend` — but the ledger is *yours*, on the portal.)
 - **● per VAST GPU** — the dot tracks the GPU readiness lifecycle: **yellow** = launch started, waiting for a GPU (offer/creation); **grey** = instance up, model downloading/loading; **green** = ready (model loaded, serving); **red** = last launch failed (or the failed instance is still running and billing). Multiple servers: dots and burn aggregate over *all* running VAST instances, plus synthetic dots for waiting/failed states driven by `state/launching.json` and `state/last_failure.json`.
 - **burn** = summed $/h of the running instances; turns **red** when a burn alert is active.
 - **burn alerts** (read-only, they never tear anything down):
@@ -60,7 +60,7 @@ That's the only step. Restart pi (or `/reload`) if you installed it mid-session.
 
 ## Log in
 
-Run `/login gd` in pi's interactive mode and pick **api.girard-davila.net**. Sign in with Google at [https://provider.girard-davila.net/auth/google](https://provider.girard-davila.net/auth/google), copy the issued API key from your dashboard, and paste it. The key appears stored in the terminal. Then:
+Run `/login gd` in pi's interactive mode and pick **provider.girard-davila.net**. Sign in with Google at [https://provider.girard-davila.net/auth/google](https://provider.girard-davila.net/auth/google), copy the issued API key from your dashboard, and paste it. The key appears stored in the terminal. Then:
 
 ```
 /model
@@ -71,7 +71,7 @@ Pick any `gd/<model-id>`.
 A brand-new session that has no model yet is pointed at the default gd model automatically (default `qwen3.8-primary`, override with the `GD_DEFAULT_MODEL` env var, validated against the live catalog). If pi reports that the model catalog could not be refreshed (`Could not refresh gd; showing cached models`), run **`/gd-doctor`** in pi — it reports the exact cause (missing credential, network failure, HTTP error, or the model list), since pi's `/model` screen hides the underlying error. As a shell check, verify the machine can reach the proxy at all:
 
 ```
-curl -I https://api.girard-davila.net/api/llm/v1/models
+curl -I https://api.girard-davila.net/api/llm/v1/models   # API host (machine-to-machine), not the portal
 ```
 
 A failure there means a connectivity/VPN problem on that machine, not a pi problem. `/gd-doctor` includes the exact failure and a contact for the maintainer (Alexandre Girard, <git@alexgirard.com>) — include its output when reporting a problem.
@@ -96,8 +96,15 @@ CI (`.github/workflows/ci.yml`) runs both on every push/PR.
 
 ## Endpoint
 
-- Proxy root: `https://api.girard-davila.net/api/llm` (OpenAI-compatible `/v1/*`)
-- SSO page: `https://api.girard-davila.net/auth/sso`
+Everything a customer touches is on **provider.girard-davila.net**:
+
+- Dashboard, spend ledger and credit top-ups: `https://provider.girard-davila.net/`
+- Sign-in: `https://provider.girard-davila.net/auth/google`
+
+Model traffic goes to the gd API host (infrastructure, no UI):
+
+- Proxy root: `https://api.girard-davila.net/api/llm` (OpenAI-compatible `/v1/*`), overridable with `GD_BASE_URL` for farm/LAN setups
+- API-key top-ups from inside pi (`/gd-pay`) call `https://provider.girard-davila.net/billing`, overridable with `GD_BILLING_URL`
 
 ## License
 

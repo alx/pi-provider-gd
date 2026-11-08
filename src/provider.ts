@@ -2,9 +2,10 @@
  * pi-provider-gd — native `gd` provider.
  *
  * Builds a self-contained pi Provider: OpenAI-compatible streaming against
- * api.girard-davila.net, dynamic model discovery from /v1/models, and API-key
- * login (the key is issued on provider.girard-davila.net after Google sign-in
- * at /auth/google). No pi-provider-litellm.
+ * the gd API at api.girard-davila.net/api/llm (infrastructure), dynamic model
+ * discovery from /v1/models, and API-key login (the key is issued on the
+ * customer portal, provider.girard-davila.net, after Google sign-in at
+ * /auth/google). No pi-provider-litellm.
  *
  * Login is a pi auth flow (`auth.apiKey.login`), so the standard `/login gd`
  * selector drives it. pi persists the returned credential to the shared auth

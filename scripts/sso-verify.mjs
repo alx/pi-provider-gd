@@ -31,8 +31,14 @@ const opt = (name, def) => {
   const eq = args.find((a) => a.startsWith(name + "="));
   return eq ? eq.split("=").slice(1).join("=") : def;
 };
+/**
+ * Line 1: customer portal — sign-in, ledger, top-ups (provider.girard-davila.net).
+ */
 const BASE = (opt("--provider", process.env.GD_PROVIDER_URL || "https://provider.girard-davila.net")).replace(/\/+$/, "");
+/** Line 2: gd API host — LiteLLM proxy, machine-to-machine only (api.girard-davila.net). */
 const PROXY = (opt("--proxy", process.env.GD_PROXY_URL || "https://api.girard-davila.net/api/llm")).replace(/\/+$/, "");
+/** Billing follows the portal, not the API host (org-wfx.5.5). */
+const BILLING = (opt("--billing", process.env.GD_BILLING_URL || `${BASE}/billing`)).replace(/\/+$/, "");
 const SECONDS = parseInt(opt("--seconds", "300"), 10);
 const OPEN = !args.includes("--no-open");
 const POLL_MS = 3000;

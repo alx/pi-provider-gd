@@ -1,5 +1,6 @@
 /**
- * pi-provider-gd — self-contained native `gd` provider for api.girard-davila.net.
+ * pi-provider-gd — self-contained native `gd` provider for the gd API
+ * (api.girard-davila.net); customers live on provider.girard-davila.net.
  *
  * Installing this package is the whole setup:
  *   pi install npm:pi-provider-gd
@@ -31,6 +32,7 @@ import { createGdProvider, DEFAULT_MODEL_ID, ENV_API_KEY, toModel } from "../src
 import {
 	BASE_URL,
 	PROVIDER_ID,
+	PROVIDER_URL,
 	credentialKey,
 	defaultAuthPath,
 	fetchModelIds,
@@ -49,9 +51,13 @@ const DEFAULT_MODEL_DISCOVER_TIMEOUT_MS = 4000;
 applyEgressProxy();
 
 // Customer-facing billing entry (org-cusm.9.10 / org-wfx.1): pay from Pi.
-// The LiteLLM proxy (BASE_URL=/api/llm) and the billing service
-// (/billing, behind Caddy) are separate origins under the same host.
-const BILLING_BASE = "https://api.girard-davila.net/billing";
+//
+// The billing service lives on the CUSTOMER GATEWAY (provider.*/billing,
+// org-wfx.5.5), not on api.girard-davila.net: api.* is LiteLLM infrastructure
+// only (/api/llm, /vast, /postiz). The two used to share a host, which is why
+// this constant used to read api.*/billing — the service itself never moved.
+// GD_BILLING_URL overrides it (farm instances / staging).
+const BILLING_BASE = (process.env.GD_BILLING_URL ?? `${PROVIDER_URL}/billing`).replace(/\/+$/, "");
 
 function openUrl(url: string): void {
 	// Best-effort local opener; the URL is always printed so a headless/remote
@@ -121,7 +127,8 @@ export default function gdExtension(pi: ExtensionAPI) {
 	// ------------------------------------------------------------------
 	// gd-gpu powerline footer segment (needs pi-powerline-footer, a dep of
 	// this package):  [gd <ledger €> ●● <burn €/h> ⏱x.xh ⚠x.xh]
-	//   money  = api.girard-davila.net ledger of the gd customer key
+	//   money  = the gd customer-key ledger (LiteLLM budget - spend) exactly as
+	//            the provider.girard-davila.net dashboard shows it
 	//            (LiteLLM /key/info: budget - spend; no budget → -spend)
 	//   dots   = one ● per VAST GPU (plus synthetic dots for waiting/failed):
 	//            yellow=waiting for GPU, grey=model loading, green=ready, red=failed
@@ -466,8 +473,13 @@ export default function gdExtension(pi: ExtensionAPI) {
 				return;
 			}
 			if (mode === "rental") {
-				const hint = flowLocked ? " (self-hosted flow is currently locked - the operator unlocks one at a time)" : "";
-				pi.sendMessage({ customType: "gd-pay", content: `gd-pay rental: GPU rentals are quoted and unlocked one at a time by the operator${hint}. Contact us via girard-davila.net/models - once unlocked, the rental launches automatically.`, display: true });
+				// org-wfx.5.5.8: the rental rail (POST /billing/checkout/rental) exists
+				// server-side but nothing calls it — rentals are quoted and unlocked
+				// by the operator, so this command only points at the portal where
+				// the offer market and the account live. Say that plainly instead
+				// of implying a self-serve button exists.
+				const hint = flowLocked ? " (the self-hosted flow is currently locked - rentals are unlocked one at a time)" : "";
+				pi.sendMessage({ customType: "gd-pay", content: `gd-pay rental: GPU rentals are quoted and unlocked by the operator${hint}.\nOffers and your account: https://provider.girard-davila.net/ (GPU offers card); the full market is at https://provider.girard-davila.net/vast/\nThere is no self-serve rental checkout - once the operator unlocks yours, it launches automatically.`, display: true });
 				return;
 			}
 			const lines = [

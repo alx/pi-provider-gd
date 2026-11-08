@@ -6,11 +6,14 @@ import { fetchGdAccount, fetchRunningInstances, parseEnvFile, readGpuFailure, re
 import { gdFetch } from "./egress-proxy.ts";
 
 // ---------------------------------------------------------------------------
-// Ledger (api.girard-davila.net) — the money shown in the footer comes from
-// the LiteLLM ledger of the gd customer key, NOT from raw VAST funds:
+// Ledger — the money shown in the footer comes from the LiteLLM key record of
+// the gd customer key, NOT from raw VAST funds:
 //   available = max_budget - spend        (when a budget is set)
 //   spent     = -spend                   (when no budget: shown as -x.xx€)
 // Source: GET {proxy}/key/info?key=<gd key>  (auth: LITELLM_OPS_KEY)
+// The proxy is api.girard-davila.net/api/llm (LiteLLM infrastructure); the
+// customer-facing view of the same number is the provider.girard-davila.net
+// dashboard — footer and dashboard must agree.
 // ---------------------------------------------------------------------------
 
 export interface LedgerInfo {
