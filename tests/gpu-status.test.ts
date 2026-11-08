@@ -38,6 +38,23 @@ test("formatGdStatus: low budget (<10%) → red", () => {
 	assert.ok(out.includes("\x1b[31m0.50€\x1b[0m"), out);
 });
 
+test("formatGdStatus: alias (dashboard key name) renders first, plain", () => {
+	const out = formatGdStatus({ alias: "pi-relax", money: { budget: 10, spend: 1.78 } });
+	assert.equal(out, "pi-relax 8.22€");
+});
+
+test("formatGdStatus: long alias is truncated with ellipsis", () => {
+	const name = "a-very-long-dashboard-key-name";
+	const out = formatGdStatus({ alias: name, money: { budget: 10, spend: 1.78 } });
+	const expected = name.slice(0, 13) + "…";
+	assert.ok(out.startsWith(expected), out);
+	assert.ok(!out.includes(name), "full name must not appear");
+});
+
+test("formatGdStatus: no alias → unchanged output", () => {
+	assert.equal(formatGdStatus({ alias: null, money: { budget: 10, spend: 1.78 } }), "8.22€");
+});
+
 test("readGdKey: reads gd key from auth store", () => {
 	const f = path.join(os.tmpdir(), `gd-auth-${Date.now()}.json`);
 	fs.writeFileSync(f, JSON.stringify({ gd: { type: "api_key", key: "sk-test" } }));
@@ -84,6 +101,7 @@ test("collectGdStatus: maps state instance_id → ready, others starting", async
 			stateHome: home,
 		});
 		assert.deepEqual(data.money, { budget: 5, spend: 1.25 });
+		assert.equal(data.alias, "pi-relax");
 		const launched = Date.parse("2026-10-13T08:38:30Z");
 		assert.deepEqual(data.gpus, [
 			{ dph: 0.3, state: "ready", hourlyRate: 0.25, launchedAt: launched },

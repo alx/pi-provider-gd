@@ -1,6 +1,6 @@
 # pi-provider-gd
 
-A **native `gd` provider** for [provider.girard-davila.net](https://provider.girard-davila.net) — the customer portal where you sign in, see your spend and top up — for the [pi coding agent](https://github.com/badlogic/pi-mono). One install, one command, zero hand-editing. Model calls are served by the gd API at `api.girard-davila.net` (see [Endpoint](#endpoint)).
+A **native pi `gd` provider** for [provider.girard-davila.net](https://provider.girard-davila.net)
 
 ```
 pi install npm:pi-provider-gd
@@ -10,7 +10,7 @@ pi install npm:pi-provider-gd
 
 ## Features
 
-- **Self-contained** — no `pi-provider-litellm`, no other installs. `pi-provider-gd` registers its own native pi provider (`createProvider` + OpenAI-compatible streaming from `@earendil-works/pi-ai`).
+- **Self-contained** — `pi-provider-gd` registers its own native pi provider (`createProvider` + OpenAI-compatible streaming from `@earendil-works/pi-ai`).
 - **Native `/login gd`** — API key only: sign in with Google at [https://provider.girard-davila.net/auth/google](https://provider.girard-davila.net/auth/google), copy the issued API key from your dashboard at [https://provider.girard-davila.net/](https://provider.girard-davila.net/), and paste it. Pi stores the key in `~/.pi/agent/auth.json` under `gd`. No manual key handling.
 - **`gd/<model-id>`** — models surface under the `gd` provider id in `/model` and `/login`, refreshed live from the proxy's `/v1/models`. No pi restart needed.
 - **Sensible default model** — a new session with no model selected automatically lands on the default gd model (first live model, or `GD_DEFAULT_MODEL` if you set it) once a credential exists. No "no model" dead-end after install + login.
@@ -35,11 +35,12 @@ The proxy's dedicated GPU is primary; a rented VAST.ai 3090 is the overflow ("sl
 > Note: after upgrading pi-provider-gd, run `pi update --extensions` (or `pi remove` + `pi install npm:pi-provider-gd`) so the `pi-powerline-footer` dependency is installed into `node_modules`, then `/reload`. Without the dependency's extension loaded, `/gd-footer` writes the `customItems` entry but nothing renders.
 
 ```
-gd 8.22€ ● 0.23€/h
-gd -0.00€ ●● 0.68€/h
-gd 8.22€ !
+gd my-key 8.22€ ● 0.23€/h
+gd my-key -0.00€ ●● 0.68€/h
+gd my-key 8.22€ !
 ```
 
+- **name** = the **key name** you filled in on the [provider.girard-davila.net](https://provider.girard-davila.net) dashboard (LiteLLM `key_alias` from the same `/key/info` call as the ledger), truncated to 14 chars. Shown first, before the money.
 - **money** = the [provider.girard-davila.net](https://provider.girard-davila.net) **ledger** of your gd customer key, the same number your dashboard shows: `budget − spend` when a budget is set (red under 10%), or `−spend` in grey when the key has no budget. Never raw VAST funds. (Technically it is read from the proxy's key record — `budget`, `spend` — but the ledger is *yours*, on the portal.)
 - **● per VAST GPU** — the dot tracks the GPU readiness lifecycle: **yellow** = launch started, waiting for a GPU (offer/creation); **grey** = instance up, model downloading/loading; **green** = ready (model loaded, serving); **red** = last launch failed (or the failed instance is still running and billing). Multiple servers: dots and burn aggregate over *all* running VAST instances, plus synthetic dots for waiting/failed states driven by `state/launching.json` and `state/last_failure.json`.
 - **burn** = summed $/h of the running instances; turns **red** when a burn alert is active.

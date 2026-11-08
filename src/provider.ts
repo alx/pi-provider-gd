@@ -67,19 +67,51 @@ export function toModel(id: string, limits?: ModelLimits): Model<"openai-complet
 }
 
 /**
+ * Post-sign-in message shown in the login dialog right after the key is
+ * accepted. Multi-line: the dialog's Text component renders \n as line
+ * breaks. Invites the user to /model to pick a gd model.
+ */
+export const AFTER_SIGN_MESSAGE =
+	"Signed in.\n" +
+	"Run /model to select a gd model.";
+/** How long the after-sign message stays on screen before the dialog closes. */
+export const AFTER_SIGN_PAUSE_MS = 4000;
+
+/** Sleep up to ms, resolving early when the login flow is aborted. */
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise<void>((resolve) => {
+		if (signal?.aborted) return resolve();
+		let t: ReturnType<typeof setTimeout>;
+		const done = () => {
+			clearTimeout(t);
+			signal?.removeEventListener("abort", done);
+			resolve();
+		};
+		t = setTimeout(done, ms);
+		signal?.addEventListener("abort", done, { once: true });
+	});
+}
+
+/**
  * Prompt for the API key issued after Google sign-in, pasted by the user.
  * The user signs in at https://provider.girard-davila.net/auth/google, then
- * copies the key from their dashboard and pastes it here.
+ * copies the key from their dashboard and pastes it here. After the key is
+ * accepted the dialog switches to a short multi-line after-sign message
+ * (AFTER_SIGN_MESSAGE) inviting the user to /model.
  */
 async function manualKeyLogin(interaction: AuthInteraction): Promise<ApiKeyCredential> {
 	const key = (await interaction.prompt({
 		type: "secret",
 		message:
-			"1) Sign in at https://provider.girard-davila.net/auth/google (Google). " +
+			"1) Sign in at https://provider.girard-davila.net/auth/google (Google).\n" +
 			"2) Copy the API key from your dashboard and paste it here:",
 		placeholder: "sk-...",
 	})).trim();
 	if (key.length === 0) throw new Error("API key is empty; login cancelled");
+	interaction.notify({ type: "info", message: AFTER_SIGN_MESSAGE });
+	// Keep the dialog open briefly so the message is readable before pi
+	// stores the credential and closes the login screen.
+	await pause(AFTER_SIGN_PAUSE_MS, interaction.signal);
 	return { type: "api_key", key };
 }
 

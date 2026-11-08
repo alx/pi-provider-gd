@@ -155,6 +155,9 @@ export default function gdExtension(pi: ExtensionAPI) {
 	};
 	let gpuPoll: ReturnType<typeof setInterval> | null = null;
 	let gpuPollBusy = false;
+	// Set when the user explicitly runs /gd-footer off; the model_select
+	// auto-enable below must not override an explicit off in this session.
+	let footerExplicitlyOff = false;
 
 	const tickGpuStatus = async (ctx: ExtensionContext): Promise<void> => {
 		if (gpuPollBusy) return;
@@ -216,7 +219,7 @@ export default function gdExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("gd-footer", {
 		description: "gd segment for pi-powerline-footer: /gd-footer [on|off|status] (default on)",
-		async handler(args: string) {
+		async handler(args: string, ctx: ExtensionContext) {
 			const arg = (args ?? "").trim().toLowerCase();
 			const settings = readSettings();
 			const has = () => {
@@ -226,6 +229,7 @@ export default function gdExtension(pi: ExtensionAPI) {
 			if (arg === "off") {
 				if (!has()) return pi.sendMessage({ customType: "gd-footer", content: "gd-footer is already off.", display: true });
 				itemsWith(settings, (items) => items.filter((i) => i.id !== FOOTER_STATUS_KEY));
+				footerExplicitlyOff = true;
 				stopGpuStatusSafe();
 				return pi.sendMessage({ customType: "gd-footer", content: "gd-footer: customItems entry removed. Run /reload if pi-powerline-footer is already loaded.", display: true });
 			}
@@ -233,12 +237,14 @@ export default function gdExtension(pi: ExtensionAPI) {
 				const lines = [
 					`gd-footer entry in ${SETTINGS_PATH}: ${has() ? "present" : "missing (run /gd-footer on)"}`,
 					`status poller: ${gpuPoll ? "running (30s)" : "stopped"}`,
-					"money = gd customer key ledger (budget−spend, or −spend when unlimited) via /key/info; ● per running VAST GPU (yellow waiting for GPU / grey model loading / green ready / red launch failed); burn = summed $/h (red = burn alert); ⏱x.xh = ≥3h rented; ⚠x.xh = VAST money left < 1 day of work (GD_DAY_HOURS default 8)",
+					"name = the key name filled in on the provider.girard-davila.net dashboard (LiteLLM key_alias, truncated to 14 chars); money = gd customer key ledger (budget−spend, or −spend when unlimited) via /key/info; ● per running VAST GPU (yellow waiting for GPU / grey model loading / green ready / red launch failed); burn = summed $/h (red = burn alert); ⏱x.xh = ≥3h rented; ⚠x.xh = VAST money left < 1 day of work (GD_DAY_HOURS default 8)",
 			];
 				return pi.sendMessage({ customType: "gd-footer", content: lines.join("\n"), display: true });
 			}
 			if (has()) return pi.sendMessage({ customType: "gd-footer", content: "gd-footer is already on.", display: true });
 			itemsWith(settings, (items) => [...items, { ...FOOTER_ITEM }]);
+			footerExplicitlyOff = false;
+			startGpuStatus(ctx);
 			pi.sendMessage({ customType: "gd-footer", content: "gd-footer: customItems entry added. Run /reload if pi-powerline-footer is already loaded.", display: true });
 		},
 	});
@@ -249,6 +255,34 @@ export default function gdExtension(pi: ExtensionAPI) {
 			gpuPoll = null;
 		}
 	}
+
+	/**
+	 * Auto-enable the gd footer when a gd model is selected (via /model,
+	 * cycling, or pi.setModel, incl. the default-model self-heal). Ensures
+	 * the persisted powerline.customItems entry exists and the status poller
+	 * runs. pi-powerline-footer re-reads settings on session start, so the
+	 * segment renders after /reload or in the next session. Skipped while
+	 * the user has explicitly run /gd-footer off in this session.
+	 */
+	let footerAnnounced = false;
+	pi.on("model_select", (event, ctx) => {
+		if (event.model.provider !== PROVIDER_ID || footerExplicitlyOff) return;
+		const settings = readSettings();
+		const items = settings.powerline?.customItems;
+		if (Array.isArray(items) && items.some((i) => i.id === FOOTER_STATUS_KEY)) {
+			footerAnnounced = true;
+			return;
+		}
+		itemsWith(settings, (list) => [...list, { ...FOOTER_ITEM }]);
+		startGpuStatus(ctx);
+		if (footerAnnounced) return; // announce once, not on every model switch
+		footerAnnounced = true;
+		pi.sendMessage({
+			customType: "gd-footer",
+			content: `gd model ${event.model.id} selected — gd footer enabled (customItems entry added). Run /reload to render it this session; it appears automatically in new sessions.`,
+			display: true,
+		});
+	});
 
 	/**
 	 * /gd-doctor — diagnose the gd provider from inside pi.

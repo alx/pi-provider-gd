@@ -17,6 +17,7 @@ import { gdFetch } from "./egress-proxy.ts";
 // ---------------------------------------------------------------------------
 
 export interface LedgerInfo {
+	/** The key name the user filled in on the provider.girard-davila.net dashboard. */
 	alias: string | null;
 	maxBudget: number | null;
 	spend: number;
@@ -44,10 +45,11 @@ export async function fetchLedger(opsKey: string, gdKey: string, baseUrl: string
 	const url = `${baseUrl}/key/info?key=${encodeURIComponent(gdKey)}`;
 	const res = await gdFetch(url, { headers: { Authorization: `Bearer ${opsKey}` } });
 	if (!res.ok) throw new Error(`ledger /key/info failed: HTTP ${res.status}`);
-	const data = (await res.json()) as { info?: { key_alias?: string; max_budget?: number | null; spend?: number } };
+	const data = (await res.json()) as { info?: { key_alias?: string; key_name?: string; max_budget?: number | null; spend?: number } };
 	const info = data.info ?? {};
 	return {
-		alias: info.key_alias ?? null,
+		// The dashboard's "key name" field is LiteLLM's key_alias (key_name kept as fallback).
+		alias: info.key_alias ?? info.key_name ?? null,
 		maxBudget: info.max_budget === null || info.max_budget === undefined ? null : Number(info.max_budget),
 		spend: Number(info.spend ?? 0),
 	};
@@ -79,6 +81,11 @@ export const LAUNCHING_MAX_AGE_MS = 30 * 60 * 1000;
 export const FAILURE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 export interface GdStatusInput {
+	/**
+	 * The key name filled in on the provider.girard-davila.net dashboard
+	 * (LiteLLM key_alias), rendered as the first footer part. null = unknown.
+	 */
+	alias?: string | null;
 	/**
 	 * Ledger money: null = unknown/error.
 	 * budget null = no budget set (show spend as -x.xx€); else show max(0, budget - spend).
@@ -181,6 +188,10 @@ export function computeBurnAlerts(input: GdStatusInput, nowMs: number, dayH: num
 
 const euro = (n: number) => `${(Math.round(n * 100) / 100).toFixed(2)}€`;
 
+/** Cap the key name so a long dashboard name cannot blow out the powerline. */
+export const ALIAS_MAX_LEN = 14;
+const shortAlias = (s: string): string => (s.length > ALIAS_MAX_LEN ? s.slice(0, ALIAS_MAX_LEN - 1) + "…" : s);
+
 export interface GdFormatOptions {
 	/** Injection point for tests; defaults to Date.now(). */
 	nowMs?: number;
@@ -189,7 +200,8 @@ export interface GdFormatOptions {
 }
 
 /**
- * Render the footer value: `8.22€ ●● 0.68€/h`
+ * Render the footer value: `[alias] 8.22€ ●● 0.68€/h`
+ *  - alias: the dashboard key name (truncated to ALIAS_MAX_LEN), when known.
  *  - money: available (budget - spend) as `x.xx€`, red when < 10% of budget;
  *    no budget -> spend so far as `-x.xx€` (grey).
  *  - one ● per running VAST instance: yellow=waiting for GPU, grey=starting
@@ -208,6 +220,7 @@ export function formatGdStatus(input: GdStatusInput, opts: GdFormatOptions = {})
 	const dayH = opts.dayHours ?? dayHours();
 	const alerts = computeBurnAlerts(input, nowMs, dayH);
 	const parts: string[] = [];
+	if (input.alias) parts.push(shortAlias(input.alias));
 	const m = input.money ?? null;
 	if (m) {
 		if (m.budget !== null) {
@@ -279,10 +292,12 @@ export async function collectGdStatus(opts: {
 	const vastKey = opts.vastKey ?? null;
 	const home = opts.stateHome ?? vastHome();
 	const nowMs = opts.nowMs ?? Date.now();
+	let alias: string | null = null;
 
 	if (opsKey && gdKey) {
 		try {
 			const ledger = await fetchLedger(opsKey, gdKey);
+			alias = ledger.alias;
 			money = { budget: ledger.maxBudget, spend: ledger.spend };
 		} catch (e) {
 			apiError.push(e instanceof Error ? e.message : String(e));
@@ -342,6 +357,7 @@ export async function collectGdStatus(opts: {
 		}
 	}
 	return {
+		alias,
 		money,
 		gpus,
 		vastUsd,
